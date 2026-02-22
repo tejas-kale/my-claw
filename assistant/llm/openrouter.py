@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -63,8 +64,6 @@ class OpenRouterProvider(LLMProvider):
 
 
 def _safe_json_loads(raw: str) -> dict[str, Any]:
-    import json
-
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
