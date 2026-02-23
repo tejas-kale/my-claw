@@ -1,0 +1,35 @@
+{
+  "compaction": {
+    "memoryFlush": {
+      "enabled": true,
+      "softThresholdTokens": 4000
+    }
+  },
+  "contextPruning": {
+    "mode": "cache-ttl",
+    "ttl": "6h",
+    "keepLastAssistants": 3
+  },
+  "memory": {
+    "backend": "qmd",
+    "qmd": {
+      "paths": [
+        {
+          "path": ".",
+          "name": "memory-root",
+          "pattern": "MEMORY.md"
+        },
+        {
+          "path": "./memory",
+          "name": "daily-memory",
+          "pattern": "**/*.md"
+        },
+        {
+          "path": "./learnings",
+          "name": "learnings",
+          "pattern": "**/*.md"
+        }
+      ]
+    }
+  }
+}
