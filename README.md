@@ -2,6 +2,13 @@
 
 Personal single-user Signal assistant inspired by NanoClaw, implemented in Python with clean modular boundaries.
 
+This repository also contains a lean OpenClaw workspace setup focused on:
+
+- safer memory across compaction cycles
+- better retrieval quality (hybrid search)
+- explicit boot-time retrieval habits
+- lighter always-loaded documentation
+
 ## Architecture
 
 ```text
@@ -19,6 +26,24 @@ Tool Registry
 ```
 
 The runtime is vendor-neutral at the architecture layer: `assistant.llm.base.LLMProvider` isolates model invocation from the rest of the system.
+
+## Configuration
+
+Use `/openclaw.config.json` as the baseline runtime configuration.
+
+Key improvements included:
+
+- `compaction.memoryFlush.enabled: true` to persist important context before compaction
+- `contextPruning` with TTL to reduce long-session context bloat
+- `memory.qmd.paths` configured for `MEMORY.md`, daily logs, and learnings
+
+## Workspace layout
+
+- `AGENTS.md`: boot sequence + retrieval/write/handover discipline
+- `MEMORY.md`: curated long-term memory (kept intentionally small)
+- `learnings/LEARNINGS.md`: one-line rules from mistakes
+- `memory/`: daily append-only logs (`YYYY-MM-DD.md`)
+- `docs/`: reference material moved out of always-loaded memory
 
 ## Project layout
 
