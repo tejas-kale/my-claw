@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     signal_cli_path: str = Field(default="signal-cli", alias="SIGNAL_CLI_PATH")
     signal_account: str = Field(..., alias="SIGNAL_ACCOUNT")
     signal_owner_number: str = Field(..., alias="SIGNAL_OWNER_NUMBER")
+    # Comma-separated E.164 numbers allowed to send commands (defaults to owner only).
+    signal_allowed_senders: str = Field(default="", alias="SIGNAL_ALLOWED_SENDERS")
     signal_poll_interval_seconds: float = Field(default=2.0, alias="SIGNAL_POLL_INTERVAL_SECONDS")
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
@@ -33,3 +35,13 @@ def load_settings() -> Settings:
     """Load and validate settings."""
 
     return Settings()
+
+
+def allowed_senders(settings: Settings) -> frozenset[str]:
+    """Return the set of E.164 numbers permitted to send commands.
+
+    Always includes the owner. Additional numbers can be added via the
+    SIGNAL_ALLOWED_SENDERS env var as a comma-separated list.
+    """
+    extra = {n.strip() for n in settings.signal_allowed_senders.split(",") if n.strip()}
+    return frozenset({settings.signal_owner_number} | extra)

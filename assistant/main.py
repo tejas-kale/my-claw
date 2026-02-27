@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from assistant.agent_runtime import AgentRuntime
-from assistant.config import load_settings
+from assistant.config import allowed_senders, load_settings
 from assistant.db import Database
 from assistant.llm.openrouter import OpenRouterProvider
 from assistant.models import Message
@@ -50,6 +50,7 @@ async def run() -> None:
         account=settings.signal_account,
         poll_interval_seconds=settings.signal_poll_interval_seconds,
         owner_number=settings.signal_owner_number,
+        allowed_senders=allowed_senders(settings),
     )
 
     async def handle_scheduled_prompt(group_id: str, prompt: str) -> None:

@@ -22,11 +22,13 @@ class SignalAdapter:
         account: str,
         poll_interval_seconds: float,
         owner_number: str,
+        allowed_senders: frozenset[str],
     ) -> None:
         self._signal_cli_path = signal_cli_path
         self._account = account
         self._poll_interval_seconds = poll_interval_seconds
         self._owner_number = owner_number
+        self._allowed_senders = allowed_senders
 
     async def start_daemon(self) -> None:
         """Start signal-cli daemon process in background."""
@@ -75,6 +77,11 @@ class SignalAdapter:
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     continue
                 if message is not None:
+                    if message.sender_id not in self._allowed_senders:
+                        LOGGER.warning(
+                            "Dropping message from unauthorized sender %s", message.sender_id
+                        )
+                        continue
                     yield message
 
     async def resolve_number(self, uuid: str) -> str:
