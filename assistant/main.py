@@ -49,6 +49,7 @@ async def run() -> None:
         signal_cli_path=settings.signal_cli_path,
         account=settings.signal_account,
         poll_interval_seconds=settings.signal_poll_interval_seconds,
+        owner_number=settings.signal_owner_number,
     )
 
     async def handle_scheduled_prompt(group_id: str, prompt: str) -> None:
@@ -65,7 +66,6 @@ async def run() -> None:
 
     scheduler = TaskScheduler(db=db, handler=handle_scheduled_prompt)
 
-    await signal_adapter.start_daemon()
     scheduler_task = asyncio.create_task(scheduler.run_forever(), name="task-scheduler")
 
     try:

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     database_path: Path = Field(default=Path("assistant.db"), alias="DATABASE_PATH")
     signal_cli_path: str = Field(default="signal-cli", alias="SIGNAL_CLI_PATH")
     signal_account: str = Field(..., alias="SIGNAL_ACCOUNT")
+    signal_owner_number: str = Field(..., alias="SIGNAL_OWNER_NUMBER")
     signal_poll_interval_seconds: float = Field(default=2.0, alias="SIGNAL_POLL_INTERVAL_SECONDS")
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")

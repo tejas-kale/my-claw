@@ -21,20 +21,23 @@ class SignalAdapter:
         signal_cli_path: str,
         account: str,
         poll_interval_seconds: float,
+        owner_number: str,
     ) -> None:
         self._signal_cli_path = signal_cli_path
         self._account = account
         self._poll_interval_seconds = poll_interval_seconds
+        self._owner_number = owner_number
 
     async def start_daemon(self) -> None:
         """Start signal-cli daemon process in background."""
 
         process = await asyncio.create_subprocess_exec(
             self._signal_cli_path,
+            "-o",
+            "json",
             "-a",
             self._account,
             "daemon",
-            "--json",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -46,10 +49,13 @@ class SignalAdapter:
         while True:
             process = await asyncio.create_subprocess_exec(
                 self._signal_cli_path,
+                "-o",
+                "json",
                 "-a",
                 self._account,
                 "receive",
-                "--json",
+                "-t",
+                str(int(self._poll_interval_seconds)),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -71,10 +77,38 @@ class SignalAdapter:
                 if message is not None:
                     yield message
 
-            await asyncio.sleep(self._poll_interval_seconds)
+    async def resolve_number(self, uuid: str) -> str:
+        """Return the phone number for a UUID by scanning the contacts list.
+
+        Falls back to the original UUID if not found.
+        """
+        process = await asyncio.create_subprocess_exec(
+            self._signal_cli_path,
+            "-o",
+            "json",
+            "-a",
+            self._account,
+            "listContacts",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await process.communicate()
+        raw = stdout.decode()
+        for line in raw.splitlines():
+            try:
+                contact = json.loads(line)
+                if contact.get("uuid") == uuid and contact.get("number"):
+                    return contact["number"]
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        LOGGER.warning("Could not resolve UUID %s via contacts, falling back to owner number", uuid)
+        return self._owner_number
 
     async def send_message(self, recipient: str, text: str, is_group: bool = True) -> None:
         """Send text message to Signal recipient."""
+
+        if not is_group and not recipient.startswith("+"):
+            recipient = await self.resolve_number(recipient)
 
         args = [
             self._signal_cli_path,
