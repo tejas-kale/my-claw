@@ -344,7 +344,6 @@ class PodcastTool(Tool):
     parameters_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "group_id": {"type": "string"},
             "podcast_type": {
                 "type": "string",
                 "enum": list(PODCAST_TYPES),
@@ -359,7 +358,7 @@ class PodcastTool(Tool):
                 "description": "Local filesystem path to an attached PDF. Provide when a file was attached.",
             },
         },
-        "required": ["group_id", "podcast_type"],
+        "required": ["podcast_type"],
         "additionalProperties": False,
     }
 
