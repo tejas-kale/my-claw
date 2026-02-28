@@ -20,6 +20,9 @@ dev = [
 [project.scripts]
 claw = "assistant.main:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["assistant"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
