@@ -26,6 +26,8 @@ sed -n '24,80p' assistant/main.py
 ```
 
 ```output
+
+
 async def run() -> None:
     """Initialize app layers and start processing loop."""
 
@@ -40,6 +42,10 @@ async def run() -> None:
     tools.register(WebSearchTool())
     tools.register(WriteNoteTool(db))
     tools.register(ListNotesTool(db))
+    tools.register(SaveNoteTool(settings.memory_root))
+    tools.register(ReadNotesTool(settings.memory_root))
+    tools.register(RipgrepSearchTool(settings.memory_root))
+    tools.register(FuzzyFilterTool())
 
     runtime = AgentRuntime(
         db=db,
@@ -48,6 +54,7 @@ async def run() -> None:
         memory_window_messages=settings.memory_window_messages,
         summary_trigger_messages=settings.memory_summary_trigger_messages,
         request_timeout_seconds=settings.request_timeout_seconds,
+        memory_root=settings.memory_root,
     )
 
     signal_adapter = SignalAdapter(
@@ -76,13 +83,6 @@ async def run() -> None:
 
     try:
         async for message in signal_adapter.poll_messages():
-            reply = await runtime.handle_message(message)
-            await signal_adapter.send_message(message.group_id, reply, is_group=message.is_group)
-    except asyncio.CancelledError:
-        raise
-    finally:
-        scheduler.stop()
-        scheduler_task.cancel()
 ```
 
 Everything is constructed in run(). The poll loop (async for message in signal_adapter.poll_messages()) drives the main thread. The scheduler runs concurrently as an asyncio task. Both funnel messages into runtime.handle_message() which does the actual LLM work.
@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
     request_timeout_seconds: float = Field(default=30.0, alias="REQUEST_TIMEOUT_SECONDS")
+    memory_root: Path = Field(
+        default=Path.home() / ".my-claw" / "memory",
+        alias="MY_CLAW_MEMORY",
+    )
 
 
 def load_settings() -> Settings:
@@ -635,6 +639,10 @@ sed -n '33,85p' assistant/agent_runtime.py
 ```
 
 ```output
+        self._memory_window_messages = memory_window_messages
+        self._summary_trigger_messages = summary_trigger_messages
+        self._request_timeout_seconds = request_timeout_seconds
+        self._memory_root = memory_root
 
     async def handle_message(self, message: Message) -> str:
         """Handle one inbound user message and return assistant reply."""
@@ -684,10 +692,6 @@ sed -n '33,85p' assistant/agent_runtime.py
         else:
             reply = response.content
 
-        reply = _to_signal_formatting(reply)
-        self._db.add_message(message.group_id, role="assistant", content=reply)
-        return reply
-
 ```
 
 The flow for a single message:
@@ -707,6 +711,10 @@ sed -n '86,125p' assistant/agent_runtime.py
 ```
 
 ```output
+        reply = _to_signal_formatting(reply)
+        self._db.add_message(message.group_id, role="assistant", content=reply)
+        return reply
+
     def _build_context(self, group_id: str) -> list[dict[str, str]]:
         summary = self._db.get_summary(group_id)
         history = self._db.get_recent_messages(group_id, self._memory_window_messages)
@@ -719,6 +727,13 @@ sed -n '86,125p' assistant/agent_runtime.py
         )
         if summary:
             system_content += f"\nConversation summary:\n{summary}"
+        if self._memory_root:
+            summary_path = self._memory_root / "summary.md"
+            if summary_path.exists():
+                system_content += f"\n\n## Your memory\n{summary_path.read_text()[:4000]}"
+            today_path = self._memory_root / "daily" / f"{date.today().isoformat()}.md"
+            if today_path.exists():
+                system_content += f"\n\n## Today's notes\n{today_path.read_text()[:2000]}"
         return [{"role": "system", "content": system_content}, *history]
 
     async def _maybe_summarize(self, group_id: str) -> None:
@@ -736,17 +751,6 @@ sed -n '86,125p' assistant/agent_runtime.py
         summary_response = await asyncio.wait_for(
             self._llm.generate(prompt), timeout=self._request_timeout_seconds
         )
-        self._db.save_summary(group_id, summary_response.content)
-
-
-def _to_signal_formatting(text: str) -> str:
-    # Bold/italic markers
-    text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text, flags=re.DOTALL)
-    text = re.sub(r"_{1,2}(.+?)_{1,2}", r"\1", text, flags=re.DOTALL)
-    # Headers
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    # Code blocks
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
 ```
 
 Context is capped at MEMORY_WINDOW_MESSAGES (default 20) recent messages. When total message count reaches MEMORY_SUMMARY_TRIGGER_MESSAGES (default 40), the runtime asks the LLM to summarise the full history and saves it. Future contexts prepend that summary to the system prompt, so the model retains long-term context without ever blowing the context window.

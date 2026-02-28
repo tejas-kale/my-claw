@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
     request_timeout_seconds: float = Field(default=30.0, alias="REQUEST_TIMEOUT_SECONDS")
+    memory_root: Path = Field(
+        default=Path.home() / ".my-claw" / "memory",
+        alias="MY_CLAW_MEMORY",
+    )
 
 
 def load_settings() -> Settings:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import date
+from pathlib import Path
 
 from assistant.db import Database
 from assistant.llm.base import LLMProvider
@@ -23,6 +25,7 @@ class AgentRuntime:
         memory_window_messages: int,
         summary_trigger_messages: int,
         request_timeout_seconds: float,
+        memory_root: Path | None = None,
     ) -> None:
         self._db = db
         self._llm = llm
@@ -30,6 +33,7 @@ class AgentRuntime:
         self._memory_window_messages = memory_window_messages
         self._summary_trigger_messages = summary_trigger_messages
         self._request_timeout_seconds = request_timeout_seconds
+        self._memory_root = memory_root
 
     async def handle_message(self, message: Message) -> str:
         """Handle one inbound user message and return assistant reply."""
@@ -95,6 +99,13 @@ class AgentRuntime:
         )
         if summary:
             system_content += f"\nConversation summary:\n{summary}"
+        if self._memory_root:
+            summary_path = self._memory_root / "summary.md"
+            if summary_path.exists():
+                system_content += f"\n\n## Your memory\n{summary_path.read_text()[:4000]}"
+            today_path = self._memory_root / "daily" / f"{date.today().isoformat()}.md"
+            if today_path.exists():
+                system_content += f"\n\n## Today's notes\n{today_path.read_text()[:2000]}"
         return [{"role": "system", "content": system_content}, *history]
 
     async def _maybe_summarize(self, group_id: str) -> None:

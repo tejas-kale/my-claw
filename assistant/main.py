@@ -13,8 +13,10 @@ from assistant.llm.openrouter import OpenRouterProvider
 from assistant.models import Message
 from assistant.scheduler import TaskScheduler
 from assistant.signal_adapter import SignalAdapter
+from assistant.tools.memory_tool import ReadNotesTool, SaveNoteTool
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.registry import ToolRegistry
+from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
 from assistant.tools.time_tool import GetCurrentTimeTool, WebSearchTool
 
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +37,10 @@ async def run() -> None:
     tools.register(WebSearchTool())
     tools.register(WriteNoteTool(db))
     tools.register(ListNotesTool(db))
+    tools.register(SaveNoteTool(settings.memory_root))
+    tools.register(ReadNotesTool(settings.memory_root))
+    tools.register(RipgrepSearchTool(settings.memory_root))
+    tools.register(FuzzyFilterTool())
 
     runtime = AgentRuntime(
         db=db,
@@ -43,6 +49,7 @@ async def run() -> None:
         memory_window_messages=settings.memory_window_messages,
         summary_trigger_messages=settings.memory_summary_trigger_messages,
         request_timeout_seconds=settings.request_timeout_seconds,
+        memory_root=settings.memory_root,
     )
 
     signal_adapter = SignalAdapter(
