@@ -22,9 +22,151 @@ LOGGER = logging.getLogger(__name__)
 # Fill in the prompt strings for each type below.
 # ---------------------------------------------------------------------------
 PODCAST_TYPES: dict[str, str] = {
-    "econpod": "YOUR ECONPOD PROMPT HERE",
-    "cspod": "YOUR CSPOD PROMPT HERE",
-    "ddpod": "YOUR DDPOD PROMPT HERE",
+    "econpod": """
+        You are to generate a podcast script in the style of Planet Money by Planet Money.
+
+        Using only the material provided in this notebook as your source, create a compelling 20–30 minute podcast episode script that:
+            1.	Tells a clear economic story centred on one strong, curiosity-driven question.
+            2.	Opens with a hook (an intriguing anecdote, paradox, or surprising fact drawn from the material).
+            3.	Develops the narrative through:
+            •	Concrete examples
+            •	Characters (real individuals mentioned in the material, if available)
+            •	Data explained in accessible terms
+            •	Moments of tension, uncertainty, or discovery
+            4.	Breaks down complex ideas using:
+            •	Plain language
+            •	Analogies
+            •	Step-by-step reasoning
+            5.	Includes:
+            •	Host narration
+            •	Short conversational exchanges between two hosts (natural, informal, but precise)
+            •	Occasional “wait, what?” clarification moments
+            6.	Avoids jargon unless clearly explained.
+            7.	Ends with a satisfying takeaway that reframes the original question.
+
+        Structure the output as:
+            •	Episode title
+            •	Cold open (1–2 minutes)
+            •	Theme music cue
+            •	Main narrative segments (with clear transitions)
+            •	Short mid-episode recap
+            •	Final insight / closing reflection
+
+        Tone: Curious, sharp, lightly playful, but intellectually rigorous.
+        Style: Story first, economics through narrative.
+
+        If multiple angles are possible, choose the one with the strongest narrative tension.
+    """,
+    "cspod": """
+        You are to generate a podcast script in the style of Planet Money by Planet Money — but focused on a computer science topic where the core audience is primarily interested in understanding the algorithm.
+
+        Using only the material provided in this notebook as your source, create a compelling 20–30 minute podcast episode script that:
+
+        Core Objective
+
+        Tell the story of one central algorithm through a strong, curiosity-driven technical question.
+
+        The episode should:
+            1.	Open with a sharp hook:
+            •	A surprising computational constraint
+            •	A failure case
+            •	A performance bottleneck
+            •	Or a real-world problem that demanded this algorithm
+            2.	Build narrative tension around:
+            •	Why naïve solutions fail
+            •	What constraints make the problem hard (time, space, scale, adversarial input, distribution, etc.)
+            •	The key insight that unlocks the algorithm
+            3.	Make the algorithm the protagonist:
+            •	Explain the intuition first
+            •	Then walk through the mechanics step by step
+            •	Clearly articulate invariants, trade-offs, and complexity
+            •	Highlight what makes it elegant, clever, or counterintuitive
+            4.	Include:
+            •	Host narration
+            •	Conversational exchanges between two hosts
+            •	“Hold on, why does that work?” clarification moments
+            •	Occasional pseudo-code explanations in spoken form (clear but not overly formal)
+            5.	Break down complexity with:
+            •	Concrete examples
+            •	Small input walkthroughs
+            •	Visual mental models
+            •	Comparisons to simpler baselines
+            6.	Discuss:
+            •	Time and space complexity (intuitively, then formally)
+            •	Edge cases
+            •	Where it breaks
+            •	Why alternatives are worse
+            •	Real-world applications
+            7.	Avoid unnecessary jargon, but do not oversimplify. The audience is technically literate and cares about rigour.
+
+        Structure the output as:
+            •	Episode title
+            •	Cold open (1–2 minutes)
+            •	Theme music cue
+            •	Segment 1: The problem
+            •	Segment 2: Failed approaches
+            •	Segment 3: The key insight
+            •	Segment 4: The algorithm walkthrough
+            •	Segment 5: Complexity and trade-offs
+            •	Short recap
+            •	Closing reflection (what this teaches us about computation)
+
+        Tone: Curious, analytical, technically precise, lightly playful.
+        Style: Story first, algorithm second — but with real depth.
+
+        If multiple interpretations are possible, choose the version with the clearest algorithmic insight and strongest explanatory arc.
+    """,
+    "ddpod": """
+        You are to generate a podcast episode script in the style of Planet Money, using only the content from the provided academic paper as your source.
+
+        Your episode should:
+            1.	Open with a compelling question or real-world problem that the paper addresses.
+        Start with an engaging hook drawn from the paper’s motivation, surprising insight, paradox, or failure case.
+            2.	Explain the core scientific or technical contribution of the paper in accessible language:
+            •	Define key concepts introduced by the paper.
+            •	Highlight what problem the authors are solving and why it matters.
+            •	Clarify any foundational terms before referring to formal definitions or equations.
+            3.	Structure around a narrative arc:
+            •	What existing approaches failed or were insufficient?
+            •	What key idea or insight the authors introduce?
+            •	How the new approach works (intuitive explanation first, then technical mechanics).
+            •	What results or evidence the authors present.
+            4.	Illustrate complex ideas with examples:
+            •	Simple everyday analogies.
+            •	Concrete, small-scale examples to make abstract ideas tangible.
+            •	Conversational clarifications between two hosts (e.g., “Why does this matter?” “How is this different?”).
+            5.	Discuss evaluation and results:
+            •	What methods did the authors use to validate their approach?
+            •	What are the key findings?
+            •	How do these findings support the central thesis of the paper?
+            6.	Reflect on broader implications and limitations:
+            •	Why the contribution matters beyond the paper.
+            •	Where it could be applied.
+            •	What limitations or open questions remain.
+
+        Required Structure
+            •	Episode Title
+            •	Cold Open (1–2 minutes)
+            •	Theme Music Cue
+            •	Segment 1: The Big Question/Problem
+            •	Segment 2: Background & Context
+            •	Segment 3: What’s New — The Paper’s Contribution
+            •	Segment 4: How It Works — Intuition + Mechanics
+            •	Segment 5: Evidence & Results
+            •	Segment 6: Broader Implications
+            •	Short Recap
+            •	Closing Reflection
+
+        Tone & Style
+            •	Story first, explanation second
+            •	Accessible for technically literate audiences
+            •	Minimal jargon; when used, always clearly explained
+            •	Conversational but accurate
+
+        Length
+
+        2,500–3,500 words (approximately a 20–30 minute episode)
+    """,
 }
 
 _NLM_TIMEOUT = 60  # seconds for any single nlm CLI call
