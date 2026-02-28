@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -10,6 +12,11 @@ import httpx
 from assistant.config import Settings
 from assistant.llm.base import LLMProvider
 from assistant.models import LLMResponse, LLMToolCall
+
+_LOGGER = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = [5, 15, 45]
 
 
 class OpenRouterProvider(LLMProvider):
@@ -35,15 +42,27 @@ class OpenRouterProvider(LLMProvider):
 
         timeout = httpx.Timeout(self._settings.request_timeout_seconds)
         async with httpx.AsyncClient(base_url=self._settings.openrouter_base_url, timeout=timeout) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._settings.openrouter_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
+            for attempt in range(_MAX_RETRIES + 1):
+                response = await client.post(
+                    "/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                if response.status_code == 429 and attempt < _MAX_RETRIES:
+                    wait = _RETRY_BACKOFF_SECONDS[attempt]
+                    _LOGGER.warning(
+                        "OpenRouter rate limited (429), retrying in %ds (attempt %d/%d)",
+                        wait,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                response.raise_for_status()
+                break
             data = response.json()
 
         choice = data["choices"][0]["message"]

@@ -80,7 +80,11 @@ async def run() -> None:
 
     try:
         async for message in signal_adapter.poll_messages():
-            reply = await runtime.handle_message(message)
+            try:
+                reply = await runtime.handle_message(message)
+            except Exception:
+                LOGGER.exception("Unhandled error processing message from %s", message.sender_id)
+                reply = "Sorry, something went wrong on my end. Please try again."
             await signal_adapter.send_message(message.group_id, reply, is_group=message.is_group)
     except asyncio.CancelledError:
         raise
