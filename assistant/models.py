@@ -17,6 +17,7 @@ class Message:
     timestamp: datetime
     message_id: str | None = None
     is_group: bool = True
+    attachments: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

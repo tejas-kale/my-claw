@@ -111,8 +111,14 @@ class SignalAdapter:
         LOGGER.warning("Could not resolve UUID %s via contacts, falling back to owner number", uuid)
         return self._owner_number
 
-    async def send_message(self, recipient: str, text: str, is_group: bool = True) -> None:
-        """Send text message to Signal recipient."""
+    async def send_message(
+        self,
+        recipient: str,
+        text: str,
+        is_group: bool = True,
+        attachment_path: str | None = None,
+    ) -> None:
+        """Send text message to Signal recipient, optionally with a file attachment."""
 
         if not is_group and not recipient.startswith("+"):
             recipient = await self.resolve_number(recipient)
@@ -129,6 +135,8 @@ class SignalAdapter:
             args.extend(["-g", recipient])
         else:
             args.append(recipient)
+        if attachment_path is not None:
+            args.extend(["-a", attachment_path])
 
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -140,6 +148,39 @@ class SignalAdapter:
             raise RuntimeError(f"signal-cli send failed: {stderr.decode().strip()}")
 
 
+_SIGNAL_ATTACHMENTS_DIR = "~/.local/share/signal-cli/attachments"
+
+
+def _parse_attachments(raw: list[object]) -> list[dict[str, str]]:
+    """Normalise signal-cli attachment dicts into a consistent internal shape.
+
+    Each returned dict has at minimum a 'local_path' key constructed from the
+    attachment id if no explicit file path is present in the signal-cli output.
+    """
+    import os
+
+    result: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        # Newer signal-cli versions include the stored path directly.
+        local_path: str = (
+            item.get("file")  # type: ignore[assignment]
+            or item.get("storedFilename")
+            or os.path.expanduser(
+                f"{_SIGNAL_ATTACHMENTS_DIR}/{item.get('id', '')}"
+            )
+        )
+        result.append(
+            {
+                "local_path": str(local_path),
+                "content_type": str(item.get("contentType", "application/octet-stream")),
+                "filename": str(item.get("filename") or ""),
+            }
+        )
+    return result
+
+
 def _to_message(payload: dict[str, object]) -> Message | None:
     envelope = payload.get("envelope")
     if not isinstance(envelope, dict):
@@ -147,8 +188,15 @@ def _to_message(payload: dict[str, object]) -> Message | None:
     data_message = envelope.get("dataMessage")
     if not isinstance(data_message, dict):
         return None
+
     text = data_message.get("message")
-    if not isinstance(text, str) or not text.strip():
+    text = text.strip() if isinstance(text, str) else ""
+
+    raw_attachments = data_message.get("attachments")
+    attachments = _parse_attachments(raw_attachments if isinstance(raw_attachments, list) else [])
+
+    # Drop messages with no content at all.
+    if not text and not attachments:
         return None
 
     source = str(envelope.get("source") or "unknown")
@@ -166,8 +214,9 @@ def _to_message(payload: dict[str, object]) -> Message | None:
     return Message(
         group_id=group_id,
         sender_id=source,
-        text=text.strip(),
+        text=text,
         timestamp=timestamp,
         message_id=str(envelope.get("timestamp") or ""),
         is_group=is_group,
+        attachments=attachments,
     )

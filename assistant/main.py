@@ -15,6 +15,7 @@ from assistant.scheduler import TaskScheduler
 from assistant.signal_adapter import SignalAdapter
 from assistant.tools.memory_tool import ReadNotesTool, SaveNoteTool
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
+from assistant.tools.podcast_tool import PodcastTool
 from assistant.tools.registry import ToolRegistry
 from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
 from assistant.tools.time_tool import GetCurrentTimeTool, WebSearchTool
@@ -59,6 +60,7 @@ async def run() -> None:
         owner_number=settings.signal_owner_number,
         allowed_senders=allowed_senders(settings),
     )
+    tools.register(PodcastTool(signal_adapter=signal_adapter))
 
     async def handle_scheduled_prompt(group_id: str, prompt: str) -> None:
         response = await runtime.handle_message(
