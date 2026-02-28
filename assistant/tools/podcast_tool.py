@@ -347,6 +347,10 @@ class PodcastTool(Tool):
                 "type": "string",
                 "description": "Local filesystem path to an attached PDF. Provide when a file was attached.",
             },
+            "is_group": {
+                "type": "boolean",
+                "description": "True if the message came from a group chat, False for a direct message.",
+            },
         },
         "required": ["group_id", "podcast_type"],
         "additionalProperties": False,
@@ -360,6 +364,7 @@ class PodcastTool(Tool):
         podcast_type: str = kwargs["podcast_type"]
         source_url: str | None = kwargs.get("source_url")
         attachment_path: str | None = kwargs.get("attachment_path")
+        is_group: bool = bool(kwargs.get("is_group", True))
 
         if podcast_type not in PODCAST_TYPES:
             return {"error": f"Unknown podcast type '{podcast_type}'. Valid types: {', '.join(PODCAST_TYPES)}."}
@@ -428,7 +433,7 @@ class PodcastTool(Tool):
             _poll_and_send(
                 signal_adapter=self._signal_adapter,
                 group_id=group_id,
-                is_group=True,
+                is_group=is_group,
                 notebook_id=notebook_id,
                 artifact_id=artifact_id,
                 podcast_type=podcast_type,

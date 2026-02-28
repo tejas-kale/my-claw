@@ -54,6 +54,8 @@ class AgentRuntime:
             for tool_call in response.tool_calls:
                 if "group_id" not in tool_call.arguments:
                     tool_call.arguments["group_id"] = message.group_id
+                if "is_group" not in tool_call.arguments:
+                    tool_call.arguments["is_group"] = message.is_group
                 result = await self._tool_registry.execute(message.group_id, tool_call.name, tool_call.arguments)
                 tool_messages.append(
                     {
