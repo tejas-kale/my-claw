@@ -358,10 +358,6 @@ class PodcastTool(Tool):
                 "type": "string",
                 "description": "Local filesystem path to an attached PDF. Provide when a file was attached.",
             },
-            "is_group": {
-                "type": "boolean",
-                "description": "True if the message came from a group chat, False for a direct message.",
-            },
         },
         "required": ["group_id", "podcast_type"],
         "additionalProperties": False,
