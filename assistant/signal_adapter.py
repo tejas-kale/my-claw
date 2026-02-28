@@ -77,7 +77,11 @@ class SignalAdapter:
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     continue
                 if message is not None:
-                    if message.sender_id not in self._allowed_senders:
+                    sender = message.sender_id
+                    if not sender.startswith("+"):
+                        sender = await self.resolve_number(sender)
+                        message.sender_id = sender
+                    if sender not in self._allowed_senders:
                         LOGGER.warning(
                             "Dropping message from unauthorized sender %s", message.sender_id
                         )
