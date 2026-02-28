@@ -78,7 +78,7 @@ class SignalAdapter:
                     continue
                 if message is not None:
                     sender = message.sender_id
-                    if not sender.startswith("+"):
+                    if sender not in self._allowed_senders and not sender.startswith("+"):
                         sender = await self.resolve_number(sender)
                         message.sender_id = sender
                     if sender not in self._allowed_senders:
