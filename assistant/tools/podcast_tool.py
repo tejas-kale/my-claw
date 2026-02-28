@@ -374,8 +374,10 @@ class PodcastTool(Tool):
         focus_prompt = PODCAST_TYPES[podcast_type]
 
         # --- 1. Verify nlm is installed ---
-        rc, _, _ = await _run_nlm("--version")
+        rc, stdout, stderr = await _run_nlm("--version")
         if rc != 0:
+            msg = f"nlm not found or failed: rc={rc} stdout={stdout!r} stderr={stderr!r}"
+            LOGGER.error(msg)
             return {
                 "error": (
                     "The NotebookLM CLI (nlm) is not installed or not on PATH. "
@@ -387,26 +389,29 @@ class PodcastTool(Tool):
         title = f"Podcast {podcast_type} {datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         rc, stdout, stderr = await _run_nlm("notebook", "create", title, "--json")
         if rc != 0:
-            return {"error": f"Failed to create NotebookLM notebook: {stderr}"}
+            LOGGER.error("notebook create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
+            return {"error": f"Failed to create NotebookLM notebook: rc={rc} {stderr or stdout}"}
         notebook_id = _parse_notebook_id(stdout)
         if not notebook_id:
+            LOGGER.error("notebook create: could not parse ID from stdout=%r stderr=%r", stdout, stderr)
             return {"error": f"Could not parse notebook ID from: {stdout!r}"}
         LOGGER.info("Created notebook %s for %s podcast", notebook_id, podcast_type)
 
         # --- 3. Add source ---
         if attachment_path:
-            rc, _, stderr = await _run_nlm(
+            rc, stdout, stderr = await _run_nlm(
                 "source", "add", notebook_id, "--file", attachment_path, "--wait",
                 timeout=120,
             )
         else:
-            rc, _, stderr = await _run_nlm(
+            rc, stdout, stderr = await _run_nlm(
                 "source", "add", notebook_id, "--url", source_url, "--wait",  # type: ignore[arg-type]
                 timeout=120,
             )
         if rc != 0:
+            LOGGER.error("source add failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             await _run_nlm("notebook", "delete", notebook_id, "--confirm")
-            return {"error": f"Failed to add source to notebook: {stderr}"}
+            return {"error": f"Failed to add source to notebook: rc={rc} {stderr or stdout}"}
         LOGGER.info("Source added to notebook %s", notebook_id)
 
         # --- 4. Create podcast ---
@@ -419,10 +424,12 @@ class PodcastTool(Tool):
             "--json",
         )
         if rc != 0:
+            LOGGER.error("audio create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             await _run_nlm("notebook", "delete", notebook_id, "--confirm")
-            return {"error": f"Failed to start podcast generation: {stderr}"}
+            return {"error": f"Failed to start podcast generation: rc={rc} {stderr or stdout}"}
         artifact_id = _parse_artifact_id(stdout)
         if not artifact_id:
+            LOGGER.error("audio create: could not parse artifact ID from stdout=%r stderr=%r", stdout, stderr)
             await _run_nlm("notebook", "delete", notebook_id, "--confirm")
             return {"error": f"Could not parse artifact ID from: {stdout!r}"}
         LOGGER.info("Podcast generation started, artifact %s", artifact_id)
