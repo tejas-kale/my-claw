@@ -112,8 +112,8 @@ class SignalAdapter:
                     return contact["number"]
             except (json.JSONDecodeError, AttributeError):
                 continue
-        LOGGER.warning("Could not resolve UUID %s via contacts, falling back to owner number", uuid)
-        return self._owner_number
+        LOGGER.debug("Could not resolve UUID %s via contacts; leaving as-is", uuid)
+        return uuid
 
     async def send_message(
         self,
