@@ -39,6 +39,10 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {tool_name}")
 
         validated = _validate_json_schema(tool.parameters_schema, arguments)
+        # Pass runtime-injected fields through even when not declared in the schema.
+        for key in ("group_id", "is_group"):
+            if key in arguments and key not in validated:
+                validated[key] = arguments[key]
         try:
             result = await tool.run(**validated)
             self._db.log_tool_execution(group_id, tool_name, validated, result, succeeded=True)

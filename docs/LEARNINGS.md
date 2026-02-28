@@ -24,3 +24,17 @@
 2. Run `signal-cli updateProfile --given-name <name>` to set a profile so recipients see a name.
 3. Add the owner's number as a contact: `signal-cli updateContact <owner_number>`.
 4. Set `SIGNAL_OWNER_NUMBER` in `.env` as fallback for UUID resolution.
+
+## NotebookLM MCP-CLI authentication
+
+`nlm login` fails on headless VMs (e.g. GCP Debian) because Chrome DevTools port 9222 cannot drive Google OAuth. Workaround using cookie export:
+
+1. Install Chrome on the VM: `sudo apt-get install google-chrome-stable`
+2. On MacBook: install the **EditThisCookie** extension from the Chrome Web Store.
+3. Log in to notebooklm.google.com fully in Chrome.
+4. Use EditThisCookie → **Export** to get clean JSON cookies (avoids Unicode `✓` characters that break TSV copy-paste).
+5. `scp cookies.json VM:~/.local/share/notebooklm-mcp-cli/profiles/default/`
+6. `nlm login --manual --file cookies.json --force`
+7. Verify: `nlm login --check`
+
+This bypasses headless Chrome OAuth limitations entirely and gives persistent VM auth.
