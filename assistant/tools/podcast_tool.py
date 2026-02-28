@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -194,7 +195,7 @@ async def _run_nlm(*args: str, timeout: int = _NLM_TIMEOUT) -> tuple[int, str, s
 
 
 def _parse_notebook_id(stdout: str) -> str | None:
-    """Extract notebook ID from `nlm notebook create --json` output."""
+    """Extract notebook ID from `nlm notebook create` output."""
     try:
         data = json.loads(stdout)
         # Handles {"id": "..."} or [{"id": "..."}] shapes.
@@ -203,13 +204,17 @@ def _parse_notebook_id(stdout: str) -> str | None:
         return str(data.get("id") or data.get("notebook_id") or "")
     except (json.JSONDecodeError, AttributeError, IndexError):
         pass
-    # Fallback: if --quiet was also used the line might just be the raw ID.
+    # Fallback: scan output for a UUID.
+    m = re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', stdout, re.IGNORECASE)
+    if m:
+        return m.group(0)
+    # Last-ditch: bare single-word line.
     line = stdout.splitlines()[0].strip() if stdout else ""
     return line or None
 
 
 def _parse_artifact_id(stdout: str) -> str | None:
-    """Extract artifact ID from `nlm audio create --json` output."""
+    """Extract artifact ID from `nlm audio create` output."""
     try:
         data = json.loads(stdout)
         if isinstance(data, list):
@@ -219,6 +224,10 @@ def _parse_artifact_id(stdout: str) -> str | None:
                 return str(data[key])
     except (json.JSONDecodeError, AttributeError, IndexError):
         pass
+    # Fallback: scan output for a UUID.
+    m = re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', stdout, re.IGNORECASE)
+    if m:
+        return m.group(0)
     return None
 
 
@@ -266,8 +275,10 @@ async def _poll_and_send(
             if _find_completed_artifact(stdout, artifact_id):
                 LOGGER.info("Podcast artifact %s is ready; downloading", artifact_id)
                 rc, _, stderr = await _run_nlm(
-                    "download", "audio", notebook_id, artifact_id,
+                    "download", "audio", notebook_id,
+                    "--id", artifact_id,
                     "--output", output_path,
+                    "--no-progress",
                     timeout=120,
                 )
                 if rc != 0:
@@ -387,7 +398,7 @@ class PodcastTool(Tool):
 
         # --- 2. Create notebook ---
         title = f"Podcast {podcast_type} {datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-        rc, stdout, stderr = await _run_nlm("notebook", "create", title, "--json")
+        rc, stdout, stderr = await _run_nlm("notebook", "create", title)
         if rc != 0:
             LOGGER.error("notebook create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             return {"error": f"Failed to create NotebookLM notebook: rc={rc} {stderr or stdout}"}
@@ -421,7 +432,6 @@ class PodcastTool(Tool):
             "--length", "long",
             "--focus", focus_prompt,
             "--confirm",
-            "--json",
         )
         if rc != 0:
             LOGGER.error("audio create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
