@@ -66,7 +66,14 @@ class OpenRouterProvider(LLMProvider):
             data = response.json()
 
         choice = data["choices"][0]["message"]
+        finish_reason = data["choices"][0].get("finish_reason")
         content = choice.get("content") or ""
+        _LOGGER.info(
+            "LLM response: finish_reason=%r content=%r tool_calls=%r",
+            finish_reason,
+            content[:200] if content else "",
+            choice.get("tool_calls"),
+        )
 
         parsed_tool_calls: list[LLMToolCall] = []
         for tool_call in choice.get("tool_calls", []):

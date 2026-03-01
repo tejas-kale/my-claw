@@ -53,7 +53,7 @@ def test_parse_artifact_id_missing_returns_none():
 
 
 def test_find_completed_artifact_matching():
-    data = {"artifacts": [{"id": "art-1", "status": "complete"}]}
+    data = {"artifacts": [{"id": "art-1", "status": "completed"}]}
     assert _find_completed_artifact(json.dumps(data), "art-1") is True
 
 
@@ -185,7 +185,7 @@ async def test_poll_and_send_success(tmp_path: "os.PathLike[str]") -> None:
         f.write("fake audio")
 
     status_generating = json.dumps({"artifacts": [{"id": "art-1", "status": "generating"}]})
-    status_complete = json.dumps({"artifacts": [{"id": "art-1", "status": "complete"}]})
+    status_complete = json.dumps({"artifacts": [{"id": "art-1", "status": "completed"}]})
 
     call_responses = [
         _make_process(0, status_generating),   # poll 1

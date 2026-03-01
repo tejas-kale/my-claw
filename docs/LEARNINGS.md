@@ -25,6 +25,12 @@
 3. Add the owner's number as a contact: `signal-cli updateContact <owner_number>`.
 4. Set `SIGNAL_OWNER_NUMBER` in `.env` as fallback for UUID resolution.
 
+## OpenRouter model tool-calling reliability
+
+GLM5 (`z-ai/glm-5`) does not reliably call tools — it hallucinates success responses instead (`finish_reason='stop'`, no `tool_calls`). Switching to `google/gemini-3-flash-preview` (Gemini Flash) resolved the issue and the podcast tool was called correctly.
+
+When tool calls silently fail, check the model first before debugging the tool or runtime.
+
 ## NotebookLM MCP-CLI authentication
 
 `nlm login` fails on headless VMs (e.g. GCP Debian) because Chrome DevTools port 9222 cannot drive Google OAuth. Workaround using cookie export:
@@ -38,3 +44,5 @@
 7. Verify: `nlm login --check`
 
 This bypasses headless Chrome OAuth limitations entirely and gives persistent VM auth.
+
+**Update:** Reverted to running Claw on MacBook. The manual cookie approach was not feasible — cookies expire within minutes, requiring constant re-export. On the GCP VM, launching a visible Chrome window for `notebooklm-mcp-cli` to drive OAuth and auto-refresh cookies was not achievable.

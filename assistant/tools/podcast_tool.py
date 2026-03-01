@@ -241,26 +241,13 @@ def _find_completed_artifact(stdout: str, artifact_id: str) -> bool:
             artifacts = data.get("artifacts") or data.get("items") or []
         elif isinstance(data, list):
             artifacts = data
-        LOGGER.debug(
-            "_find_completed_artifact: looking for artifact_id=%r in %d artifact(s)",
-            artifact_id,
-            len(artifacts),
-        )
         for artifact in artifacts:
             aid = str(artifact.get("id") or artifact.get("artifact_id") or "")
             status = str(artifact.get("status") or "").lower()
-            LOGGER.debug(
-                "  artifact id=%r status=%r (target=%r, match=%s, complete=%s)",
-                aid,
-                status,
-                artifact_id,
-                aid == artifact_id,
-                status in ("complete", "done", "ready"),
-            )
-            if aid == artifact_id and status in ("complete", "done", "ready"):
+            if aid == artifact_id and status in ("completed", "done", "ready"):
                 return True
-    except (json.JSONDecodeError, AttributeError) as exc:
-        LOGGER.warning("_find_completed_artifact: failed to parse status JSON: %s", exc)
+    except (json.JSONDecodeError, AttributeError):
+        pass
     return False
 
 
@@ -276,99 +263,37 @@ async def _poll_and_send(
     """Background task: poll generation status, download, send, then clean up."""
     success = False
 
-    LOGGER.info(
-        "[poll_and_send] START notebook_id=%r artifact_id=%r podcast_type=%r output_path=%r",
-        notebook_id,
-        artifact_id,
-        podcast_type,
-        output_path,
-    )
-
     try:
         for attempt in range(_MAX_POLLS):
-            LOGGER.info(
-                "[poll_and_send] Poll attempt %d/%d — sleeping %ds",
-                attempt + 1,
-                _MAX_POLLS,
-                _POLL_INTERVAL,
-            )
             await asyncio.sleep(_POLL_INTERVAL)
 
-            LOGGER.info(
-                "[poll_and_send] Calling: nlm studio status %s --json", notebook_id
-            )
             rc, stdout, stderr = await _run_nlm("studio", "status", notebook_id, "--json")
-            LOGGER.info(
-                "[poll_and_send] studio status: rc=%d stdout=%r stderr=%r",
-                rc,
-                stdout,
-                stderr,
-            )
             if rc != 0:
-                LOGGER.warning(
-                    "[poll_and_send] studio status poll %d failed (rc=%d): stderr=%r stdout=%r",
-                    attempt + 1,
-                    rc,
-                    stderr,
-                    stdout,
-                )
+                LOGGER.warning("studio status poll %d failed: %s", attempt + 1, stderr)
                 continue
 
-            artifact_ready = _find_completed_artifact(stdout, artifact_id)
-            LOGGER.info(
-                "[poll_and_send] artifact_ready=%s for artifact_id=%r",
-                artifact_ready,
-                artifact_id,
-            )
-
-            if artifact_ready:
-                LOGGER.info(
-                    "[poll_and_send] Artifact %r is ready. Starting download.", artifact_id
-                )
-                LOGGER.info(
-                    "[poll_and_send] Download command: nlm download audio %s --id %s --output %s --no-progress",
-                    notebook_id,
-                    artifact_id,
-                    output_path,
-                )
-                rc, dl_stdout, dl_stderr = await _run_nlm(
+            if _find_completed_artifact(stdout, artifact_id):
+                LOGGER.info("Podcast artifact %s is ready; downloading", artifact_id)
+                rc, _, stderr = await _run_nlm(
                     "download", "audio", notebook_id,
                     "--id", artifact_id,
                     "--output", output_path,
                     "--no-progress",
                     timeout=120,
                 )
-                LOGGER.info(
-                    "[poll_and_send] download audio: rc=%d stdout=%r stderr=%r",
-                    rc,
-                    dl_stdout,
-                    dl_stderr,
-                )
                 if rc != 0:
-                    LOGGER.error(
-                        "[poll_and_send] Download FAILED: rc=%d stderr=%r stdout=%r",
-                        rc,
-                        dl_stderr,
-                        dl_stdout,
-                    )
+                    LOGGER.error("Failed to download podcast: %s", stderr)
                     await signal_adapter.send_message(
                         group_id,
                         "Podcast generation finished but download failed. Sorry about that.",
                         is_group=is_group,
                     )
                 else:
-                    # Verify the file actually exists and has content.
                     file_exists = os.path.exists(output_path)
                     file_size = os.path.getsize(output_path) if file_exists else 0
-                    LOGGER.info(
-                        "[poll_and_send] Download succeeded. output_path=%r exists=%s size=%d bytes",
-                        output_path,
-                        file_exists,
-                        file_size,
-                    )
                     if not file_exists or file_size == 0:
                         LOGGER.error(
-                            "[poll_and_send] Downloaded file missing or empty: exists=%s size=%d",
+                            "Downloaded file missing or empty (exists=%s, size=%d)",
                             file_exists,
                             file_size,
                         )
@@ -378,11 +303,6 @@ async def _poll_and_send(
                             is_group=is_group,
                         )
                     else:
-                        LOGGER.info(
-                            "[poll_and_send] Sending audio attachment to group_id=%r is_group=%s",
-                            group_id,
-                            is_group,
-                        )
                         await signal_adapter.send_message(
                             group_id,
                             f"Your {podcast_type} podcast is ready!",
@@ -390,14 +310,9 @@ async def _poll_and_send(
                             attachment_path=output_path,
                         )
                         success = True
-                        LOGGER.info("[poll_and_send] Audio sent successfully.")
                 break
         else:
-            LOGGER.warning(
-                "[poll_and_send] Timed out after %d polls (%d minutes)",
-                _MAX_POLLS,
-                _MAX_POLLS * _POLL_INTERVAL // 60,
-            )
+            LOGGER.warning("Podcast generation timed out after %d polls", _MAX_POLLS)
             await signal_adapter.send_message(
                 group_id,
                 "Podcast generation timed out (over 60 minutes). Please try again.",
@@ -405,31 +320,19 @@ async def _poll_and_send(
             )
     finally:
         # Always delete notebook and temp file regardless of outcome.
-        LOGGER.info("[poll_and_send] Cleanup: deleting notebook %r", notebook_id)
-        rc, _, del_stderr = await _run_nlm("notebook", "delete", notebook_id, "--confirm")
+        rc, _, stderr = await _run_nlm("notebook", "delete", notebook_id, "--confirm")
         if rc != 0:
-            LOGGER.warning(
-                "[poll_and_send] Failed to delete notebook %r: rc=%d stderr=%r",
-                notebook_id,
-                rc,
-                del_stderr,
-            )
+            LOGGER.warning("Failed to delete notebook %s: %s", notebook_id, stderr)
         else:
-            LOGGER.info("[poll_and_send] Deleted notebook %r", notebook_id)
+            LOGGER.info("Deleted notebook %s", notebook_id)
 
-        LOGGER.info("[poll_and_send] Cleanup: removing temp file %r", output_path)
         try:
             os.remove(output_path)
-            LOGGER.info("[poll_and_send] Temp file removed: %r", output_path)
-        except OSError as exc:
-            LOGGER.debug("[poll_and_send] Temp file removal skipped (%s): %r", exc, output_path)
+        except OSError:
+            pass
 
-        LOGGER.info(
-            "[poll_and_send] DONE. success=%s podcast_type=%r notebook_id=%r",
-            success,
-            podcast_type,
-            notebook_id,
-        )
+        if success:
+            LOGGER.info("Podcast pipeline complete for %s", podcast_type)
 
 
 class PodcastTool(Tool):
@@ -557,12 +460,6 @@ class PodcastTool(Tool):
 
         # --- 5. Spawn background polling task ---
         output_path = os.path.join(tempfile.gettempdir(), f"podcast_{notebook_id}.m4a")
-        LOGGER.info(
-            "[create_podcast] Spawning background task: notebook_id=%r artifact_id=%r output_path=%r",
-            notebook_id,
-            artifact_id,
-            output_path,
-        )
         asyncio.create_task(
             _poll_and_send(
                 signal_adapter=self._signal_adapter,
