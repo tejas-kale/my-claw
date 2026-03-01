@@ -164,6 +164,11 @@ class Database:
             ).fetchone()
         return row["summary"] if row else None
 
+    def clear_history(self, group_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM messages WHERE group_id = ?", (group_id,))
+            conn.execute("DELETE FROM conversations WHERE group_id = ?", (group_id,))
+
     def log_tool_execution(
         self,
         group_id: str,

@@ -489,6 +489,54 @@ class FakeLLM:
         return LLMResponse(content=self._reply)
 
 
+# ===========================================================================
+# CommandDispatcher.dispatch — @clear
+# ===========================================================================
+
+
+class TestCommandDispatcherClear:
+    @pytest.mark.asyncio
+    async def test_clear_returns_confirmation(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        dispatcher = CommandDispatcher(db=db)
+        reply = await dispatcher.dispatch(_msg("@clear"))
+        assert reply is not None
+        assert "clear" in reply.lower() or "history" in reply.lower()
+
+    @pytest.mark.asyncio
+    async def test_clear_wipes_messages(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        db.upsert_group("group-1")
+        db.add_message("group-1", "user", "hello")
+        db.add_message("group-1", "assistant", "hi")
+
+        dispatcher = CommandDispatcher(db=db)
+        await dispatcher.dispatch(_msg("@clear"))
+
+        assert db.get_recent_messages("group-1", limit=10) == []
+
+    @pytest.mark.asyncio
+    async def test_clear_wipes_summary(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        db.upsert_group("group-1")
+        db.save_summary("group-1", "old summary")
+
+        dispatcher = CommandDispatcher(db=db)
+        await dispatcher.dispatch(_msg("@clear"))
+
+        assert db.get_summary("group-1") is None
+
+    @pytest.mark.asyncio
+    async def test_clear_without_db_returns_error(self):
+        dispatcher = CommandDispatcher()
+        reply = await dispatcher.dispatch(_msg("@clear"))
+        assert reply is not None
+        assert "not available" in reply.lower()
+
+
 class TestAgentRuntimeCommandIntegration:
     """AgentRuntime must route @commands via CommandDispatcher and skip the LLM."""
 

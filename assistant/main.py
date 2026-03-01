@@ -65,6 +65,7 @@ async def run() -> None:
         ddg_search_tool=DdgSearchTool(),
         read_url_tool=ReadUrlTool(api_key=settings.jina_api_key),
         llm=provider,
+        db=db,
     )
 
     runtime = AgentRuntime(

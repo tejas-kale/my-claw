@@ -16,6 +16,7 @@ from assistant.models import Message
 from assistant.tools.podcast_tool import PODCAST_TYPES
 
 if TYPE_CHECKING:
+    from assistant.db import Database
     from assistant.llm.base import LLMProvider
     from assistant.tools.ddg_search_tool import DdgSearchTool
     from assistant.tools.podcast_tool import PodcastTool
@@ -56,12 +57,14 @@ class CommandDispatcher:
         ddg_search_tool: DdgSearchTool | None = None,
         read_url_tool: ReadUrlTool | None = None,
         llm: LLMProvider | None = None,
+        db: Database | None = None,
     ) -> None:
         self._podcast_tool = podcast_tool
         self._kagi_search_tool = kagi_search_tool
         self._ddg_search_tool = ddg_search_tool
         self._read_url_tool = read_url_tool
         self._llm = llm
+        self._db = db
 
     async def dispatch(self, message: Message) -> str | None:
         """Dispatch a message to a command handler.
@@ -78,7 +81,15 @@ class CommandDispatcher:
             return await self._handle_podcast(args, message)
         if command == "websearch":
             return await self._handle_websearch(args)
+        if command == "clear":
+            return self._handle_clear(message.group_id)
         return None
+
+    def _handle_clear(self, group_id: str) -> str:
+        if self._db is None:
+            return "History clearing is not available."
+        self._db.clear_history(group_id)
+        return "Conversation history cleared."
 
     async def _handle_websearch(self, args: list[str]) -> str:
         if not args:
