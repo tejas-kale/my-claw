@@ -19,7 +19,10 @@ from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.podcast_tool import PodcastTool
 from assistant.tools.registry import ToolRegistry
 from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
-from assistant.tools.time_tool import GetCurrentTimeTool, WebSearchTool
+from assistant.tools.ddg_search_tool import DdgSearchTool
+from assistant.tools.read_url_tool import ReadUrlTool
+from assistant.tools.time_tool import GetCurrentTimeTool
+from assistant.tools.web_search_tool import KagiSearchTool
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
@@ -36,7 +39,8 @@ async def run() -> None:
     provider = OpenRouterProvider(settings)
     tools = ToolRegistry(db)
     tools.register(GetCurrentTimeTool())
-    tools.register(WebSearchTool())
+    tools.register(KagiSearchTool(api_key=settings.kagi_api_key))
+    tools.register(ReadUrlTool(api_key=settings.jina_api_key))
     tools.register(WriteNoteTool(db))
     tools.register(ListNotesTool(db))
     tools.register(SaveNoteTool(settings.memory_root))
@@ -55,7 +59,13 @@ async def run() -> None:
     podcast_tool = PodcastTool(signal_adapter=signal_adapter)
     tools.register(podcast_tool)
 
-    command_dispatcher = CommandDispatcher(podcast_tool=podcast_tool)
+    command_dispatcher = CommandDispatcher(
+        podcast_tool=podcast_tool,
+        kagi_search_tool=KagiSearchTool(api_key=settings.kagi_api_key),
+        ddg_search_tool=DdgSearchTool(),
+        read_url_tool=ReadUrlTool(api_key=settings.jina_api_key),
+        llm=provider,
+    )
 
     runtime = AgentRuntime(
         db=db,

@@ -50,6 +50,7 @@ class AgentRuntime:
         if self._command_dispatcher and message.text.startswith("@"):
             cmd_reply = await self._command_dispatcher.dispatch(message)
             if cmd_reply is not None:
+                cmd_reply = _to_signal_formatting(cmd_reply)
                 self._db.add_message(message.group_id, role="assistant", content=cmd_reply)
                 return cmd_reply
 

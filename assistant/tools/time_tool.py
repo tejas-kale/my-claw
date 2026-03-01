@@ -22,21 +22,3 @@ class GetCurrentTimeTool(Tool):
     async def run(self, **kwargs: Any) -> dict[str, str]:
         return {"utc_time": datetime.now(timezone.utc).isoformat()}
 
-
-class WebSearchTool(Tool):
-    """Stub search tool."""
-
-    name = "web_search"
-    description = "Search the web for current information (stub implementation)."
-    parameters_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    }
-
-    async def run(self, **kwargs: Any) -> dict[str, str]:
-        query = str(kwargs["query"]).strip()
-        return {"result": f"Stub search result for: {query}"}

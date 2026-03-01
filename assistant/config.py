@@ -33,6 +33,8 @@ class Settings(BaseSettings):
         default=Path.home() / ".my-claw" / "memory",
         alias="MY_CLAW_MEMORY",
     )
+    kagi_api_key: str = Field(..., alias="KAGI_API_KEY")
+    jina_api_key: str = Field(default="", alias="JINA_API_KEY")
 
 
 def load_settings() -> Settings:
