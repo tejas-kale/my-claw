@@ -397,7 +397,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
         result = await dispatcher.dispatch(_msg("@websearch something"))
-        assert result == "answer without jina"
+        assert "answer without jina" in result
 
     @pytest.mark.asyncio
     async def test_websearch_handles_jina_exception_and_tries_next(self):
@@ -415,7 +415,7 @@ class TestCommandDispatcherWebsearch:
         )
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
         result = await dispatcher.dispatch(_msg("@websearch something"))
-        assert result == "final answer"
+        assert "final answer" in result
         assert read_url.run.call_count == 2
 
     @pytest.mark.asyncio
@@ -436,6 +436,40 @@ class TestCommandDispatcherWebsearch:
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
         result = await dispatcher.dispatch(_msg("@websearch something"))
         assert result == "THE FINAL ANSWER"
+
+    # --- References section ---
+
+    @pytest.mark.asyncio
+    async def test_websearch_appends_references_for_jina_fetched_urls(self):
+        llm = _llm_search(["q"], ["https://cited.com", "https://also-cited.com"], "the answer")
+        search = _search_tool("raw results")
+        read_url = _search_tool("page content")
+        dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
+        result = await dispatcher.dispatch(_msg("@websearch something"))
+        assert "the answer" in result
+        assert "References" in result
+        assert "https://cited.com" in result
+        assert "https://also-cited.com" in result
+
+    @pytest.mark.asyncio
+    async def test_websearch_references_fall_back_to_ranked_urls_when_jina_fails(self):
+        ranked = ["https://ranked-1.com", "https://ranked-2.com"]
+        llm = _llm_search(["q"], ranked, "the answer")
+        search = _search_tool("raw results")
+        read_url = _search_tool("Failed to read URL (HTTP 403): https://ranked-1.com")
+        dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
+        result = await dispatcher.dispatch(_msg("@websearch something"))
+        assert "References" in result
+        assert "https://ranked-1.com" in result
+
+    @pytest.mark.asyncio
+    async def test_websearch_no_references_when_no_urls_available(self):
+        llm = _llm_search(["q"], [], "the answer")
+        search = _search_tool("raw results")
+        dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
+        result = await dispatcher.dispatch(_msg("@websearch something"))
+        assert result == "the answer"
+        assert "References" not in result
 
 
 # ===========================================================================

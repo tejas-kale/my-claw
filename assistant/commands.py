@@ -115,6 +115,7 @@ class CommandDispatcher:
 
         # Step 4: Fetch up to 2 pages via Jina from ranked URLs.
         jina_pages: list[str] = []
+        fetched_urls: list[str] = []
         if self._read_url_tool:
             for url in ranked_urls[:5]:
                 if len(jina_pages) >= 2:
@@ -126,6 +127,7 @@ class CommandDispatcher:
                     continue
                 if not page.startswith("Failed to read URL"):
                     jina_pages.append(page)
+                    fetched_urls.append(url)
                 else:
                     LOGGER.warning("Jina failed for %s", url)
 
@@ -154,7 +156,13 @@ class CommandDispatcher:
             },
         ]
         response = await self._llm.generate(messages)
-        return response.content
+        answer = response.content
+
+        reference_urls = fetched_urls or ranked_urls[:3]
+        if reference_urls:
+            refs = "\n".join(f"{i + 1}. {u}" for i, u in enumerate(reference_urls))
+            return f"{answer}\n\nReferences:\n{refs}"
+        return answer
 
     async def _generate_sub_queries(self, query: str) -> list[str]:
         messages = [

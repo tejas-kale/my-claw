@@ -77,6 +77,19 @@ class AgentRuntime:
         )
 
         if response.tool_calls:
+            web_searches = [tc for tc in response.tool_calls if tc.name == "web_search"]
+            if web_searches:
+                queries = [tc.arguments.get("query", "") for tc in web_searches if tc.arguments.get("query")]
+                query_lines = "\n".join(f"- {q}" for q in queries)
+                first_query = queries[0] if queries else ""
+                permission_reply = _to_signal_formatting(
+                    f"I'd like to search the web to answer this. Proposed:\n\n"
+                    f"{query_lines}\n\n"
+                    f"Use @websearch {first_query} to proceed."
+                )
+                self._db.add_message(message.group_id, role="assistant", content=permission_reply)
+                return permission_reply
+
             tool_messages: list[dict] = []
             for tool_call in response.tool_calls:
                 if "group_id" not in tool_call.arguments:

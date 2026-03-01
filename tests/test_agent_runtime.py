@@ -1,11 +1,32 @@
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from assistant.agent_runtime import AgentRuntime
 from assistant.db import Database
-from assistant.models import LLMResponse, Message
+from assistant.models import LLMResponse, LLMToolCall, Message
 from assistant.tools.registry import ToolRegistry
+
+
+def _msg(text: str) -> Message:
+    return Message(
+        group_id="group-1",
+        sender_id="user-1",
+        text=text,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+
+def _runtime(db: object, llm: object) -> AgentRuntime:
+    return AgentRuntime(
+        db=db,
+        llm=llm,
+        tool_registry=ToolRegistry(db),
+        memory_window_messages=10,
+        summary_trigger_messages=100,
+        request_timeout_seconds=5,
+    )
 
 
 class FakeProvider:
@@ -40,3 +61,76 @@ async def test_agent_runtime_returns_reply(tmp_path):
 
     history = db.get_recent_messages("group-1", limit=10)
     assert [m["role"] for m in history] == ["user", "assistant"]
+
+
+class TestWebSearchPermission:
+    @pytest.mark.asyncio
+    async def test_web_search_tool_call_returns_permission_request(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(name="web_search", arguments={"query": "Howard Lutnick"})],
+            )
+        )
+        runtime = _runtime(db, llm)
+        reply = await runtime.handle_message(_msg("Who is Howard Lutnick?"))
+        assert "Howard Lutnick" in reply
+        assert "search" in reply.lower()
+        llm.generate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_web_search_permission_shows_all_proposed_queries(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[
+                    LLMToolCall(name="web_search", arguments={"query": "query one"}),
+                    LLMToolCall(name="web_search", arguments={"query": "query two"}),
+                ],
+            )
+        )
+        runtime = _runtime(db, llm)
+        reply = await runtime.handle_message(_msg("something complex"))
+        assert "query one" in reply
+        assert "query two" in reply
+
+    @pytest.mark.asyncio
+    async def test_non_web_search_tool_calls_execute_normally(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        tool = MagicMock()
+        tool.name = "get_current_time"
+        tool.run = AsyncMock(return_value={"utc_time": "2026-01-01T00:00:00"})
+        tool.parameters_schema = {"type": "object", "properties": {}, "additionalProperties": False}
+
+        registry = ToolRegistry(db)
+        registry.register(tool)
+
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    tool_calls=[LLMToolCall(name="get_current_time", call_id="c1", arguments={})],
+                ),
+                LLMResponse(content="It is 2026-01-01."),
+            ]
+        )
+        runtime = AgentRuntime(
+            db=db,
+            llm=llm,
+            tool_registry=registry,
+            memory_window_messages=10,
+            summary_trigger_messages=100,
+            request_timeout_seconds=5,
+        )
+        reply = await runtime.handle_message(_msg("What time is it?"))
+        assert reply == "It is 2026-01-01."
+        assert llm.generate.call_count == 2
+        tool.run.assert_called_once()
