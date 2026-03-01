@@ -17,6 +17,7 @@ from assistant.signal_adapter import SignalAdapter
 from assistant.tools.memory_tool import ReadNotesTool, SaveNoteTool
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.podcast_tool import PodcastTool
+from assistant.tools.price_tracker_tool import PriceTrackerTool
 from assistant.tools.registry import ToolRegistry
 from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
 from assistant.tools.ddg_search_tool import DdgSearchTool
@@ -59,6 +60,15 @@ async def run() -> None:
     podcast_tool = PodcastTool(signal_adapter=signal_adapter)
     tools.register(podcast_tool)
 
+    price_tracker_tool: PriceTrackerTool | None = None
+    if settings.bigquery_project_id:
+        price_tracker_tool = PriceTrackerTool(
+            llm=provider,
+            bq_project=settings.bigquery_project_id,
+            bq_dataset=settings.bigquery_dataset_id,
+            bq_table=settings.bigquery_table_id,
+        )
+
     command_dispatcher = CommandDispatcher(
         podcast_tool=podcast_tool,
         kagi_search_tool=KagiSearchTool(api_key=settings.kagi_api_key),
@@ -66,6 +76,7 @@ async def run() -> None:
         read_url_tool=ReadUrlTool(api_key=settings.jina_api_key),
         llm=provider,
         db=db,
+        price_tracker_tool=price_tracker_tool,
     )
 
     runtime = AgentRuntime(

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from assistant.llm.base import LLMProvider
     from assistant.tools.ddg_search_tool import DdgSearchTool
     from assistant.tools.podcast_tool import PodcastTool
+    from assistant.tools.price_tracker_tool import PriceTrackerTool
     from assistant.tools.read_url_tool import ReadUrlTool
     from assistant.tools.web_search_tool import KagiSearchTool
 
@@ -58,6 +59,7 @@ class CommandDispatcher:
         read_url_tool: ReadUrlTool | None = None,
         llm: LLMProvider | None = None,
         db: Database | None = None,
+        price_tracker_tool: PriceTrackerTool | None = None,
     ) -> None:
         self._podcast_tool = podcast_tool
         self._kagi_search_tool = kagi_search_tool
@@ -65,6 +67,7 @@ class CommandDispatcher:
         self._read_url_tool = read_url_tool
         self._llm = llm
         self._db = db
+        self._price_tracker_tool = price_tracker_tool
 
     async def dispatch(self, message: Message) -> str | None:
         """Dispatch a message to a command handler.
@@ -83,6 +86,8 @@ class CommandDispatcher:
             return await self._handle_websearch(args)
         if command == "clear":
             return self._handle_clear(message.group_id)
+        if command == "trackprice":
+            return await self._handle_trackprice(message)
         return None
 
     def _handle_clear(self, group_id: str) -> str:
@@ -223,6 +228,19 @@ class CommandDispatcher:
         except Exception:
             LOGGER.warning("Result ranking failed, falling back to URL order from results")
             return re.findall(r"^(https?://\S+)$", combined_results, re.MULTILINE)[:5]
+
+    async def _handle_trackprice(self, message: Message) -> str:
+        if not message.attachments:
+            return "Please attach a receipt image or PDF."
+        if self._price_tracker_tool is None:
+            return "Price tracker is not configured."
+        attachment = message.attachments[0]
+        path = attachment.get("local_path", "")
+        content_type = attachment.get("content_type", "image/jpeg")
+        result = await self._price_tracker_tool.run(path, content_type)
+        if "error" in result:
+            return f"Price tracking failed: {result['error']}"
+        return result.get("message", "Receipt saved.")
 
     async def _handle_podcast(self, args: list[str], message: Message) -> str:
         if self._podcast_tool is None:

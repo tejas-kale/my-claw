@@ -17,6 +17,11 @@
         "/^bash /Users/tejaskale/Code/my-claw/\\.walkthrough_build\\.sh$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "git -C /Users/tejaskale/Code/my-claw": true,
+        "/^\\.venv/bin/pytest tests/test_podcast_tool\\.py -q 2>&1 \\| tail -20$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

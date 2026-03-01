@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     )
     kagi_api_key: str = Field(..., alias="KAGI_API_KEY")
     jina_api_key: str = Field(default="", alias="JINA_API_KEY")
+    bigquery_project_id: str = Field(default="", alias="BIGQUERY_PROJECT_ID")
+    bigquery_dataset_id: str = Field(default="economics", alias="BIGQUERY_DATASET_ID")
+    bigquery_table_id: str = Field(default="german_shopping_receipts", alias="BIGQUERY_TABLE_ID")
 
 
 def load_settings() -> Settings:
