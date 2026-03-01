@@ -17,6 +17,8 @@ from assistant.tools.registry import ToolRegistry
 
 LOGGER = logging.getLogger(__name__)
 
+_APPROVAL_WORDS = {"ok", "yes", "sure", "yep", "yeah", "proceed", "go", "go ahead", "approve", "do it"}
+
 
 class AgentRuntime:
     """Group-isolated runtime orchestrating memory, tools, and model calls."""
@@ -40,12 +42,29 @@ class AgentRuntime:
         self._request_timeout_seconds = request_timeout_seconds
         self._memory_root = memory_root
         self._command_dispatcher = command_dispatcher
+        self._pending_web_search: dict[str, str] = {}  # group_id -> query
 
     async def handle_message(self, message: Message) -> str:
         """Handle one inbound user message and return assistant reply."""
 
         self._db.upsert_group(message.group_id)
         self._db.add_message(message.group_id, role="user", content=message.text, sender_id=message.sender_id)
+
+        if message.text.strip().lower() in _APPROVAL_WORDS and message.group_id in self._pending_web_search:
+            pending_query = self._pending_web_search.pop(message.group_id)
+            if self._command_dispatcher:
+                search_msg = Message(
+                    group_id=message.group_id,
+                    sender_id=message.sender_id,
+                    text=f"@websearch {pending_query}",
+                    timestamp=message.timestamp,
+                    is_group=message.is_group,
+                )
+                cmd_reply = await self._command_dispatcher.dispatch(search_msg)
+                if cmd_reply is not None:
+                    cmd_reply = _to_signal_formatting(cmd_reply)
+                    self._db.add_message(message.group_id, role="assistant", content=cmd_reply)
+                    return cmd_reply
 
         if self._command_dispatcher and message.text.startswith("@"):
             cmd_reply = await self._command_dispatcher.dispatch(message)
@@ -80,12 +99,13 @@ class AgentRuntime:
             web_searches = [tc for tc in response.tool_calls if tc.name == "web_search"]
             if web_searches:
                 queries = [tc.arguments.get("query", "") for tc in web_searches if tc.arguments.get("query")]
+                if queries:
+                    self._pending_web_search[message.group_id] = queries[0]
                 query_lines = "\n".join(f"- {q}" for q in queries)
-                first_query = queries[0] if queries else ""
                 permission_reply = _to_signal_formatting(
                     f"I'd like to search the web to answer this. Proposed:\n\n"
                     f"{query_lines}\n\n"
-                    f"Use @websearch {first_query} to proceed."
+                    f"Reply ok to proceed."
                 )
                 self._db.add_message(message.group_id, role="assistant", content=permission_reply)
                 return permission_reply

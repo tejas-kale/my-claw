@@ -82,6 +82,21 @@ class TestWebSearchPermission:
         llm.generate.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_permission_request_says_reply_ok(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(name="web_search", arguments={"query": "test"})],
+            )
+        )
+        runtime = _runtime(db, llm)
+        reply = await runtime.handle_message(_msg("something"))
+        assert "ok" in reply.lower()
+
+    @pytest.mark.asyncio
     async def test_web_search_permission_shows_all_proposed_queries(self, tmp_path):
         db = Database(tmp_path / "assistant.db")
         db.initialize()
@@ -99,6 +114,81 @@ class TestWebSearchPermission:
         reply = await runtime.handle_message(_msg("something complex"))
         assert "query one" in reply
         assert "query two" in reply
+
+    @pytest.mark.asyncio
+    async def test_approval_dispatches_pending_web_search(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(name="web_search", arguments={"query": "Howard Lutnick"})],
+            )
+        )
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(return_value="search results")
+        runtime = AgentRuntime(
+            db=db, llm=llm, tool_registry=ToolRegistry(db),
+            memory_window_messages=10, summary_trigger_messages=100,
+            request_timeout_seconds=5, command_dispatcher=dispatcher,
+        )
+        await runtime.handle_message(_msg("Who is Howard Lutnick?"))
+        dispatcher.dispatch.reset_mock()
+
+        reply = await runtime.handle_message(_msg("ok"))
+
+        assert "search results" in reply
+        dispatched_msg = dispatcher.dispatch.call_args[0][0]
+        assert "websearch" in dispatched_msg.text
+        assert "Howard Lutnick" in dispatched_msg.text
+
+    @pytest.mark.asyncio
+    async def test_approval_words_are_case_insensitive(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(name="web_search", arguments={"query": "test"})],
+            )
+        )
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(return_value="search results")
+        runtime = AgentRuntime(
+            db=db, llm=llm, tool_registry=ToolRegistry(db),
+            memory_window_messages=10, summary_trigger_messages=100,
+            request_timeout_seconds=5, command_dispatcher=dispatcher,
+        )
+        for word in ("OK", "Yes", "YES", "sure", "Yep"):
+            db2 = Database(tmp_path / f"assistant_{word}.db")
+            db2.initialize()
+            runtime2 = AgentRuntime(
+                db=db2, llm=llm, tool_registry=ToolRegistry(db2),
+                memory_window_messages=10, summary_trigger_messages=100,
+                request_timeout_seconds=5, command_dispatcher=dispatcher,
+            )
+            llm.generate.reset_mock()
+            llm.generate.return_value = LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(name="web_search", arguments={"query": "test"})],
+            )
+            await runtime2.handle_message(_msg("something"))
+            dispatcher.dispatch.reset_mock()
+            await runtime2.handle_message(_msg(word))
+            assert dispatcher.dispatch.called, f"Expected approval for {word!r}"
+
+    @pytest.mark.asyncio
+    async def test_ok_without_pending_search_goes_to_llm(self, tmp_path):
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = MagicMock()
+        llm.generate = AsyncMock(return_value=LLMResponse(content="llm reply"))
+        runtime = _runtime(db, llm)
+        reply = await runtime.handle_message(_msg("ok"))
+        assert reply == "llm reply"
+        llm.generate.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_non_web_search_tool_calls_execute_normally(self, tmp_path):
