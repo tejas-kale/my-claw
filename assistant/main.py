@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from assistant.agent_runtime import AgentRuntime
+from assistant.commands import CommandDispatcher
 from assistant.config import allowed_senders, load_settings
 from assistant.db import Database
 from assistant.llm.openrouter import OpenRouterProvider
@@ -43,6 +44,19 @@ async def run() -> None:
     tools.register(RipgrepSearchTool(settings.memory_root))
     tools.register(FuzzyFilterTool())
 
+    signal_adapter = SignalAdapter(
+        signal_cli_path=settings.signal_cli_path,
+        account=settings.signal_account,
+        poll_interval_seconds=settings.signal_poll_interval_seconds,
+        owner_number=settings.signal_owner_number,
+        allowed_senders=allowed_senders(settings),
+    )
+
+    podcast_tool = PodcastTool(signal_adapter=signal_adapter)
+    tools.register(podcast_tool)
+
+    command_dispatcher = CommandDispatcher(podcast_tool=podcast_tool)
+
     runtime = AgentRuntime(
         db=db,
         llm=provider,
@@ -51,16 +65,8 @@ async def run() -> None:
         summary_trigger_messages=settings.memory_summary_trigger_messages,
         request_timeout_seconds=settings.request_timeout_seconds,
         memory_root=settings.memory_root,
+        command_dispatcher=command_dispatcher,
     )
-
-    signal_adapter = SignalAdapter(
-        signal_cli_path=settings.signal_cli_path,
-        account=settings.signal_account,
-        poll_interval_seconds=settings.signal_poll_interval_seconds,
-        owner_number=settings.signal_owner_number,
-        allowed_senders=allowed_senders(settings),
-    )
-    tools.register(PodcastTool(signal_adapter=signal_adapter))
 
     async def handle_scheduled_prompt(group_id: str, prompt: str) -> None:
         response = await runtime.handle_message(
