@@ -172,7 +172,7 @@ PODCAST_TYPES: dict[str, str] = {
 
 _NLM_TIMEOUT = 60  # seconds for any single nlm CLI call
 _POLL_INTERVAL = 30  # seconds between studio status polls
-_MAX_POLLS = 20  # 20 × 30 s = 10 minutes total
+_MAX_POLLS = 120  # 120 × 30 s = 60 minutes total
 
 
 async def _run_nlm(*args: str, timeout: int = _NLM_TIMEOUT) -> tuple[int, str, str]:
@@ -241,13 +241,26 @@ def _find_completed_artifact(stdout: str, artifact_id: str) -> bool:
             artifacts = data.get("artifacts") or data.get("items") or []
         elif isinstance(data, list):
             artifacts = data
+        LOGGER.debug(
+            "_find_completed_artifact: looking for artifact_id=%r in %d artifact(s)",
+            artifact_id,
+            len(artifacts),
+        )
         for artifact in artifacts:
             aid = str(artifact.get("id") or artifact.get("artifact_id") or "")
             status = str(artifact.get("status") or "").lower()
+            LOGGER.debug(
+                "  artifact id=%r status=%r (target=%r, match=%s, complete=%s)",
+                aid,
+                status,
+                artifact_id,
+                aid == artifact_id,
+                status in ("complete", "done", "ready"),
+            )
             if aid == artifact_id and status in ("complete", "done", "ready"):
                 return True
-    except (json.JSONDecodeError, AttributeError):
-        pass
+    except (json.JSONDecodeError, AttributeError) as exc:
+        LOGGER.warning("_find_completed_artifact: failed to parse status JSON: %s", exc)
     return False
 
 
@@ -263,62 +276,160 @@ async def _poll_and_send(
     """Background task: poll generation status, download, send, then clean up."""
     success = False
 
+    LOGGER.info(
+        "[poll_and_send] START notebook_id=%r artifact_id=%r podcast_type=%r output_path=%r",
+        notebook_id,
+        artifact_id,
+        podcast_type,
+        output_path,
+    )
+
     try:
         for attempt in range(_MAX_POLLS):
+            LOGGER.info(
+                "[poll_and_send] Poll attempt %d/%d — sleeping %ds",
+                attempt + 1,
+                _MAX_POLLS,
+                _POLL_INTERVAL,
+            )
             await asyncio.sleep(_POLL_INTERVAL)
 
+            LOGGER.info(
+                "[poll_and_send] Calling: nlm studio status %s --json", notebook_id
+            )
             rc, stdout, stderr = await _run_nlm("studio", "status", notebook_id, "--json")
+            LOGGER.info(
+                "[poll_and_send] studio status: rc=%d stdout=%r stderr=%r",
+                rc,
+                stdout,
+                stderr,
+            )
             if rc != 0:
-                LOGGER.warning("studio status poll %d failed: %s", attempt + 1, stderr)
+                LOGGER.warning(
+                    "[poll_and_send] studio status poll %d failed (rc=%d): stderr=%r stdout=%r",
+                    attempt + 1,
+                    rc,
+                    stderr,
+                    stdout,
+                )
                 continue
 
-            if _find_completed_artifact(stdout, artifact_id):
-                LOGGER.info("Podcast artifact %s is ready; downloading", artifact_id)
-                rc, _, stderr = await _run_nlm(
+            artifact_ready = _find_completed_artifact(stdout, artifact_id)
+            LOGGER.info(
+                "[poll_and_send] artifact_ready=%s for artifact_id=%r",
+                artifact_ready,
+                artifact_id,
+            )
+
+            if artifact_ready:
+                LOGGER.info(
+                    "[poll_and_send] Artifact %r is ready. Starting download.", artifact_id
+                )
+                LOGGER.info(
+                    "[poll_and_send] Download command: nlm download audio %s --id %s --output %s --no-progress",
+                    notebook_id,
+                    artifact_id,
+                    output_path,
+                )
+                rc, dl_stdout, dl_stderr = await _run_nlm(
                     "download", "audio", notebook_id,
                     "--id", artifact_id,
                     "--output", output_path,
                     "--no-progress",
                     timeout=120,
                 )
+                LOGGER.info(
+                    "[poll_and_send] download audio: rc=%d stdout=%r stderr=%r",
+                    rc,
+                    dl_stdout,
+                    dl_stderr,
+                )
                 if rc != 0:
-                    LOGGER.error("Failed to download podcast: %s", stderr)
+                    LOGGER.error(
+                        "[poll_and_send] Download FAILED: rc=%d stderr=%r stdout=%r",
+                        rc,
+                        dl_stderr,
+                        dl_stdout,
+                    )
                     await signal_adapter.send_message(
                         group_id,
                         "Podcast generation finished but download failed. Sorry about that.",
                         is_group=is_group,
                     )
                 else:
-                    await signal_adapter.send_message(
-                        group_id,
-                        f"Your {podcast_type} podcast is ready!",
-                        is_group=is_group,
-                        attachment_path=output_path,
+                    # Verify the file actually exists and has content.
+                    file_exists = os.path.exists(output_path)
+                    file_size = os.path.getsize(output_path) if file_exists else 0
+                    LOGGER.info(
+                        "[poll_and_send] Download succeeded. output_path=%r exists=%s size=%d bytes",
+                        output_path,
+                        file_exists,
+                        file_size,
                     )
-                    success = True
+                    if not file_exists or file_size == 0:
+                        LOGGER.error(
+                            "[poll_and_send] Downloaded file missing or empty: exists=%s size=%d",
+                            file_exists,
+                            file_size,
+                        )
+                        await signal_adapter.send_message(
+                            group_id,
+                            "Podcast download reported success but the audio file is missing or empty. Sorry about that.",
+                            is_group=is_group,
+                        )
+                    else:
+                        LOGGER.info(
+                            "[poll_and_send] Sending audio attachment to group_id=%r is_group=%s",
+                            group_id,
+                            is_group,
+                        )
+                        await signal_adapter.send_message(
+                            group_id,
+                            f"Your {podcast_type} podcast is ready!",
+                            is_group=is_group,
+                            attachment_path=output_path,
+                        )
+                        success = True
+                        LOGGER.info("[poll_and_send] Audio sent successfully.")
                 break
         else:
-            LOGGER.warning("Podcast generation timed out after %d polls", _MAX_POLLS)
+            LOGGER.warning(
+                "[poll_and_send] Timed out after %d polls (%d minutes)",
+                _MAX_POLLS,
+                _MAX_POLLS * _POLL_INTERVAL // 60,
+            )
             await signal_adapter.send_message(
                 group_id,
-                "Podcast generation timed out (over 10 minutes). Please try again.",
+                "Podcast generation timed out (over 60 minutes). Please try again.",
                 is_group=is_group,
             )
     finally:
         # Always delete notebook and temp file regardless of outcome.
-        rc, _, stderr = await _run_nlm("notebook", "delete", notebook_id, "--confirm")
+        LOGGER.info("[poll_and_send] Cleanup: deleting notebook %r", notebook_id)
+        rc, _, del_stderr = await _run_nlm("notebook", "delete", notebook_id, "--confirm")
         if rc != 0:
-            LOGGER.warning("Failed to delete notebook %s: %s", notebook_id, stderr)
+            LOGGER.warning(
+                "[poll_and_send] Failed to delete notebook %r: rc=%d stderr=%r",
+                notebook_id,
+                rc,
+                del_stderr,
+            )
         else:
-            LOGGER.info("Deleted notebook %s", notebook_id)
+            LOGGER.info("[poll_and_send] Deleted notebook %r", notebook_id)
 
+        LOGGER.info("[poll_and_send] Cleanup: removing temp file %r", output_path)
         try:
             os.remove(output_path)
-        except OSError:
-            pass
+            LOGGER.info("[poll_and_send] Temp file removed: %r", output_path)
+        except OSError as exc:
+            LOGGER.debug("[poll_and_send] Temp file removal skipped (%s): %r", exc, output_path)
 
-        if success:
-            LOGGER.info("Podcast pipeline complete for %s", podcast_type)
+        LOGGER.info(
+            "[poll_and_send] DONE. success=%s podcast_type=%r notebook_id=%r",
+            success,
+            podcast_type,
+            notebook_id,
+        )
 
 
 class PodcastTool(Tool):
@@ -337,8 +448,9 @@ class PodcastTool(Tool):
         "Generate a NotebookLM podcast from a PDF. "
         "Use when the user sends a message like 'podcast econpod' with a PDF attachment "
         "or a URL to a PDF. "
-        "Pass attachment_path from message.attachments[0].local_path when a file is attached, "
-        "or source_url when a URL is present in the message. "
+        "When a file is attached, the message will contain a line like "
+        "'[Attachment: /path/to/file type=application/pdf]' — use that path as attachment_path. "
+        "When a URL is present in the message, use it as source_url. "
         f"Valid podcast_type values: {', '.join(PODCAST_TYPES)}."
     )
     parameters_schema: dict[str, Any] = {
@@ -381,6 +493,7 @@ class PodcastTool(Tool):
 
         # --- 1. Verify nlm is installed ---
         rc, stdout, stderr = await _run_nlm("--version")
+        LOGGER.info("nlm --version: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
         if rc != 0:
             msg = f"nlm not found or failed: rc={rc} stdout={stdout!r} stderr={stderr!r}"
             LOGGER.error(msg)
@@ -394,6 +507,7 @@ class PodcastTool(Tool):
         # --- 2. Create notebook ---
         title = f"Podcast {podcast_type} {datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         rc, stdout, stderr = await _run_nlm("notebook", "create", title)
+        LOGGER.info("notebook create: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
         if rc != 0:
             LOGGER.error("notebook create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             return {"error": f"Failed to create NotebookLM notebook: rc={rc} {stderr or stdout}"}
@@ -414,6 +528,7 @@ class PodcastTool(Tool):
                 "source", "add", notebook_id, "--url", source_url, "--wait",  # type: ignore[arg-type]
                 timeout=120,
             )
+        LOGGER.info("source add: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
         if rc != 0:
             LOGGER.error("source add failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             await _run_nlm("notebook", "delete", notebook_id, "--confirm")
@@ -428,6 +543,7 @@ class PodcastTool(Tool):
             "--focus", focus_prompt,
             "--confirm",
         )
+        LOGGER.info("audio create: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
         if rc != 0:
             LOGGER.error("audio create failed: rc=%d stdout=%r stderr=%r", rc, stdout, stderr)
             await _run_nlm("notebook", "delete", notebook_id, "--confirm")
@@ -441,6 +557,12 @@ class PodcastTool(Tool):
 
         # --- 5. Spawn background polling task ---
         output_path = os.path.join(tempfile.gettempdir(), f"podcast_{notebook_id}.m4a")
+        LOGGER.info(
+            "[create_podcast] Spawning background task: notebook_id=%r artifact_id=%r output_path=%r",
+            notebook_id,
+            artifact_id,
+            output_path,
+        )
         asyncio.create_task(
             _poll_and_send(
                 signal_adapter=self._signal_adapter,
