@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from assistant.db import Database
     from assistant.llm.base import LLMProvider
     from assistant.tools.ddg_search_tool import DdgSearchTool
+    from assistant.tools.magazine_tool import MagazineTool
     from assistant.tools.podcast_tool import PodcastTool
     from assistant.tools.price_tracker_tool import PriceTrackerTool
     from assistant.tools.read_url_tool import ReadUrlTool
@@ -60,6 +61,7 @@ class CommandDispatcher:
         llm: LLMProvider | None = None,
         db: Database | None = None,
         price_tracker_tool: PriceTrackerTool | None = None,
+        magazine_tool: MagazineTool | None = None,
     ) -> None:
         self._podcast_tool = podcast_tool
         self._kagi_search_tool = kagi_search_tool
@@ -68,6 +70,8 @@ class CommandDispatcher:
         self._llm = llm
         self._db = db
         self._price_tracker_tool = price_tracker_tool
+        self._magazine_tool = magazine_tool
+        self._pending_epub: dict[str, str] = {}  # group_id -> epub
 
     async def dispatch(self, message: Message) -> str | None:
         """Dispatch a message to a command handler.
@@ -75,6 +79,19 @@ class CommandDispatcher:
         Returns:
             A reply string for recognised commands, or None for unknown ones.
         """
+        # Plain chapter number after a chapter-listing response.
+        stripped = message.text.strip()
+        if stripped.isdigit() and message.group_id in self._pending_epub:
+            epub = self._pending_epub.pop(message.group_id)
+            if self._magazine_tool is None:
+                return "Magazine tool is not configured."
+            return await self._magazine_tool.start_generation(
+                group_id=message.group_id,
+                is_group=message.is_group,
+                epub=epub,
+                chapter=stripped,
+            )
+
         parsed = parse_command(message.text)
         if parsed is None:
             return None
@@ -88,6 +105,8 @@ class CommandDispatcher:
             return self._handle_clear(message.group_id)
         if command == "trackprice":
             return await self._handle_trackprice(message)
+        if command == "magazine":
+            return await self._handle_magazine(args, message)
         return None
 
     def _handle_clear(self, group_id: str) -> str:
@@ -241,6 +260,30 @@ class CommandDispatcher:
         if "error" in result:
             return f"Price tracking failed: {result['error']}"
         return result.get("message", "Receipt saved.")
+
+    async def _handle_magazine(self, args: list[str], message: Message) -> str:
+        if self._magazine_tool is None:
+            return "Magazine tool is not configured."
+        if not args:
+            return "Usage: @magazine <epub> [chapter-number]"
+
+        # If the last arg is a chapter number, split it off; otherwise all args
+        # form the epub name/ID. This lets multi-word source names work correctly
+        # (e.g. "@magazine The Blizzard" or "@magazine The Blizzard 3").
+        if len(args) > 1 and args[-1].isdigit():
+            epub = " ".join(args[:-1])
+            chapter = args[-1]
+            return await self._magazine_tool.start_generation(
+                group_id=message.group_id,
+                is_group=message.is_group,
+                epub=epub,
+                chapter=chapter,
+            )
+
+        epub = " ".join(args)
+        chapters = await self._magazine_tool.list_chapters(epub)
+        self._pending_epub[message.group_id] = epub
+        return f"{chapters}\n\nReply with a chapter number to generate audio."
 
     async def _handle_podcast(self, args: list[str], message: Message) -> str:
         if self._podcast_tool is None:

@@ -635,3 +635,135 @@ class TestAgentRuntimeCommandIntegration:
         reply = await runtime.handle_message(_msg("@podcast anything"))
         assert reply == "llm reply"
         assert len(llm.calls) == 1
+
+
+# ===========================================================================
+# CommandDispatcher.dispatch — @magazine
+# ===========================================================================
+
+
+def _magazine_tool(list_result: str = "chapters", gen_result: str = "Generating...") -> Any:
+    tool = MagicMock()
+    tool.list_chapters = AsyncMock(return_value=list_result)
+    tool.start_generation = AsyncMock(return_value=gen_result)
+    return tool
+
+
+class TestCommandDispatcherMagazine:
+    @pytest.mark.asyncio
+    async def test_magazine_no_args_returns_usage(self):
+        dispatcher = CommandDispatcher(magazine_tool=_magazine_tool())
+        result = await dispatcher.dispatch(_msg("@magazine"))
+        assert result is not None
+        assert "usage" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_magazine_tool_not_configured_returns_error(self):
+        dispatcher = CommandDispatcher(magazine_tool=None)
+        result = await dispatcher.dispatch(_msg("@magazine blizzard"))
+        assert result is not None
+        assert "not configured" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_magazine_single_word_epub_lists_chapters(self):
+        tool = _magazine_tool(list_result="1  Intro\n2  Chapter Two")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        result = await dispatcher.dispatch(_msg("@magazine blizzard"))
+        assert "1  Intro\n2  Chapter Two" in result
+        tool.list_chapters.assert_awaited_once_with("blizzard")
+        tool.start_generation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_magazine_multi_word_epub_lists_chapters(self):
+        """'@magazine The Blizzard' — no chapter number, should list chapters."""
+        tool = _magazine_tool(list_result="chapters here")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        result = await dispatcher.dispatch(_msg("@magazine The Blizzard"))
+        assert "chapters here" in result
+        tool.list_chapters.assert_awaited_once_with("The Blizzard")
+        tool.start_generation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_magazine_single_word_epub_with_chapter_number_starts_generation(self):
+        tool = _magazine_tool(gen_result="Generating...")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        result = await dispatcher.dispatch(_msg("@magazine blizzard 3"))
+        assert result == "Generating..."
+        tool.start_generation.assert_awaited_once()
+        kw = tool.start_generation.call_args.kwargs
+        assert kw["epub"] == "blizzard"
+        assert kw["chapter"] == "3"
+
+    @pytest.mark.asyncio
+    async def test_magazine_multi_word_epub_with_chapter_number_starts_generation(self):
+        """'@magazine The Blizzard 3' — numeric last arg is the chapter."""
+        tool = _magazine_tool(gen_result="Generating...")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        result = await dispatcher.dispatch(_msg("@magazine The Blizzard 3"))
+        assert result == "Generating..."
+        tool.start_generation.assert_awaited_once()
+        kw = tool.start_generation.call_args.kwargs
+        assert kw["epub"] == "The Blizzard"
+        assert kw["chapter"] == "3"
+
+    @pytest.mark.asyncio
+    async def test_magazine_non_numeric_last_arg_treated_as_epub_name(self):
+        """'@magazine The Blizzard Issue' — no digit, entire string is epub."""
+        tool = _magazine_tool(list_result="chapters")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        await dispatcher.dispatch(_msg("@magazine The Blizzard Issue"))
+        tool.list_chapters.assert_awaited_once_with("The Blizzard Issue")
+
+    @pytest.mark.asyncio
+    async def test_magazine_passes_group_id_to_start_generation(self):
+        tool = _magazine_tool()
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        await dispatcher.dispatch(_msg("@magazine blizzard 5"))
+        kw = tool.start_generation.call_args.kwargs
+        assert kw["group_id"] == "group-1"
+
+    @pytest.mark.asyncio
+    async def test_magazine_list_then_digit_starts_generation(self):
+        """After listing chapters, a plain digit triggers generation."""
+        tool = _magazine_tool(list_result="1  Intro\n2  Blizzard")
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        await dispatcher.dispatch(_msg("@magazine blizzard"))
+        result = await dispatcher.dispatch(_msg("9"))
+        assert result == "Generating..."
+        kw = tool.start_generation.call_args.kwargs
+        assert kw["epub"] == "blizzard"
+        assert kw["chapter"] == "9"
+
+    @pytest.mark.asyncio
+    async def test_magazine_list_then_digit_clears_pending_state(self):
+        """Pending epub is consumed after one chapter selection."""
+        tool = _magazine_tool()
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        await dispatcher.dispatch(_msg("@magazine blizzard"))
+        await dispatcher.dispatch(_msg("3"))
+        # Second digit should NOT trigger magazine — no pending epub left.
+        result = await dispatcher.dispatch(_msg("5"))
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_digit_without_pending_epub_returns_none(self):
+        """A standalone digit with no prior listing falls through to LLM."""
+        dispatcher = CommandDispatcher(magazine_tool=_magazine_tool())
+        result = await dispatcher.dispatch(_msg("9"))
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_magazine_pending_epub_is_per_group(self):
+        """Pending epub state is scoped to the group that listed chapters."""
+        tool = _magazine_tool()
+        dispatcher = CommandDispatcher(magazine_tool=tool)
+        await dispatcher.dispatch(_msg("@magazine blizzard"))  # group-1
+        # A digit from a different group should not trigger generation.
+        other_msg = Message(
+            group_id="group-2",
+            sender_id="user-1",
+            text="9",
+            timestamp=_msg("").timestamp,
+        )
+        result = await dispatcher.dispatch(other_msg)
+        assert result is None

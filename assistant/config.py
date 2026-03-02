@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     bigquery_project_id: str = Field(default="", alias="BIGQUERY_PROJECT_ID")
     bigquery_dataset_id: str = Field(default="economics", alias="BIGQUERY_DATASET_ID")
     bigquery_table_id: str = Field(default="german_shopping_receipts", alias="BIGQUERY_TABLE_ID")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
 
 
 def load_settings() -> Settings:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
 from assistant.agent_runtime import AgentRuntime
@@ -14,14 +15,15 @@ from assistant.llm.openrouter import OpenRouterProvider
 from assistant.models import Message
 from assistant.scheduler import TaskScheduler
 from assistant.signal_adapter import SignalAdapter
+from assistant.tools.ddg_search_tool import DdgSearchTool
+from assistant.tools.magazine_tool import MagazineTool
 from assistant.tools.memory_tool import ReadNotesTool, SaveNoteTool
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.podcast_tool import PodcastTool
 from assistant.tools.price_tracker_tool import PriceTrackerTool
+from assistant.tools.read_url_tool import ReadUrlTool
 from assistant.tools.registry import ToolRegistry
 from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
-from assistant.tools.ddg_search_tool import DdgSearchTool
-from assistant.tools.read_url_tool import ReadUrlTool
 from assistant.tools.time_tool import GetCurrentTimeTool
 from assistant.tools.web_search_tool import KagiSearchTool
 
@@ -33,6 +35,9 @@ async def run() -> None:
     """Initialize app layers and start processing loop."""
 
     settings = load_settings()
+
+    if settings.gemini_api_key:
+        os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
 
     db = Database(settings.database_path)
     db.initialize()
@@ -60,6 +65,8 @@ async def run() -> None:
     podcast_tool = PodcastTool(signal_adapter=signal_adapter, llm=provider)
     tools.register(podcast_tool)
 
+    magazine_tool = MagazineTool(signal_adapter=signal_adapter)
+
     price_tracker_tool: PriceTrackerTool | None = None
     if settings.bigquery_project_id:
         price_tracker_tool = PriceTrackerTool(
@@ -77,6 +84,7 @@ async def run() -> None:
         llm=provider,
         db=db,
         price_tracker_tool=price_tracker_tool,
+        magazine_tool=magazine_tool,
     )
 
     runtime = AgentRuntime(
