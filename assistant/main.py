@@ -57,7 +57,7 @@ async def run() -> None:
         allowed_senders=allowed_senders(settings),
     )
 
-    podcast_tool = PodcastTool(signal_adapter=signal_adapter)
+    podcast_tool = PodcastTool(signal_adapter=signal_adapter, llm=provider)
     tools.register(podcast_tool)
 
     price_tracker_tool: PriceTrackerTool | None = None

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from assistant.tools.base import Tool
 
 if TYPE_CHECKING:
+    from assistant.llm.base import LLMProvider
     from assistant.signal_adapter import SignalAdapter
 
 LOGGER = logging.getLogger(__name__)
@@ -251,6 +252,38 @@ def _find_completed_artifact(stdout: str, artifact_id: str) -> bool:
     return False
 
 
+async def _extract_paper_title(
+    llm: LLMProvider,
+    source_url: str | None,
+    attachment_path: str | None,
+) -> str | None:
+    """Infer the paper title from its URL or filename via LLM."""
+    if source_url:
+        prompt = (
+            f"What is the title of the academic paper at this URL: {source_url}\n\n"
+            "Respond with ONLY the paper title, nothing else. "
+            "If you cannot determine the title, respond with 'Unknown'."
+        )
+    elif attachment_path:
+        filename = os.path.basename(attachment_path)
+        prompt = (
+            f"What is the title of an academic paper with filename: {filename}\n\n"
+            "Respond with ONLY the paper title, nothing else. "
+            "If you cannot determine the title, respond with 'Unknown'."
+        )
+    else:
+        return None
+
+    try:
+        response = await llm.generate([{"role": "user", "content": prompt}])
+        title = response.content.strip()
+        if title and title.lower() != "unknown":
+            return title
+    except Exception:
+        LOGGER.warning("Failed to extract paper title from LLM", exc_info=True)
+    return None
+
+
 async def _poll_and_send(
     signal_adapter: SignalAdapter,
     group_id: str,
@@ -259,6 +292,7 @@ async def _poll_and_send(
     artifact_id: str,
     podcast_type: str,
     output_path: str,
+    paper_title: str | None = None,
 ) -> None:
     """Background task: poll generation status, download, send, then clean up."""
     success = False
@@ -303,9 +337,13 @@ async def _poll_and_send(
                             is_group=is_group,
                         )
                     else:
+                        if paper_title:
+                            ready_msg = f"Your podcast of \"{paper_title}\" is ready!"
+                        else:
+                            ready_msg = f"Your {podcast_type} podcast is ready!"
                         await signal_adapter.send_message(
                             group_id,
-                            f"Your {podcast_type} podcast is ready!",
+                            ready_msg,
                             is_group=is_group,
                             attachment_path=output_path,
                         )
@@ -377,8 +415,9 @@ class PodcastTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, signal_adapter: SignalAdapter) -> None:
+    def __init__(self, signal_adapter: SignalAdapter, llm: LLMProvider) -> None:
         self._signal_adapter = signal_adapter
+        self._llm = llm
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         group_id: str = kwargs["group_id"]
@@ -458,7 +497,10 @@ class PodcastTool(Tool):
             return {"error": f"Could not parse artifact ID from: {stdout!r}"}
         LOGGER.info("Podcast generation started, artifact %s", artifact_id)
 
-        # --- 5. Spawn background polling task ---
+        # --- 5. Extract paper title for personalised messages ---
+        paper_title = await _extract_paper_title(self._llm, source_url, attachment_path)
+
+        # --- 6. Spawn background polling task ---
         output_path = os.path.join(tempfile.gettempdir(), f"podcast_{notebook_id}.m4a")
         asyncio.create_task(
             _poll_and_send(
@@ -469,14 +511,19 @@ class PodcastTool(Tool):
                 artifact_id=artifact_id,
                 podcast_type=podcast_type,
                 output_path=output_path,
+                paper_title=paper_title,
             ),
             name=f"podcast-{notebook_id}",
         )
 
-        return {
-            "status": "started",
-            "message": (
+        if paper_title:
+            started_msg = (
+                f"Podcast generation started for \"{paper_title}\". "
+                "I'll send the audio file when it's ready — usually 2–5 minutes."
+            )
+        else:
+            started_msg = (
                 f"Podcast generation started (type: {podcast_type}). "
                 "I'll send the audio file when it's ready — usually 2–5 minutes."
-            ),
-        }
+            )
+        return {"status": "started", "message": started_msg}

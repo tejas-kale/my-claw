@@ -11,6 +11,7 @@ import pytest
 
 from assistant.tools.podcast_tool import (
     PodcastTool,
+    _extract_paper_title,
     _find_completed_artifact,
     _parse_artifact_id,
     _parse_notebook_id,
@@ -92,6 +93,14 @@ def _make_signal_adapter() -> MagicMock:
     return adapter
 
 
+def _make_llm(title: str | None = "Test Paper Title") -> MagicMock:
+    llm = MagicMock()
+    response = MagicMock()
+    response.content = title if title is not None else "Unknown"
+    llm.generate = AsyncMock(return_value=response)
+    return llm
+
+
 # ---------------------------------------------------------------------------
 # PodcastTool.run() — validation and error paths
 # ---------------------------------------------------------------------------
@@ -100,7 +109,7 @@ def _make_signal_adapter() -> MagicMock:
 @pytest.mark.asyncio
 async def test_run_rejects_unknown_podcast_type():
     adapter = _make_signal_adapter()
-    tool = PodcastTool(signal_adapter=adapter)
+    tool = PodcastTool(signal_adapter=adapter, llm=_make_llm())
     result = await tool.run(group_id="g1", podcast_type="badtype", source_url="http://x.com/f.pdf")
     assert "error" in result
     assert "Unknown podcast type" in result["error"]
@@ -109,7 +118,7 @@ async def test_run_rejects_unknown_podcast_type():
 @pytest.mark.asyncio
 async def test_run_rejects_missing_source():
     adapter = _make_signal_adapter()
-    tool = PodcastTool(signal_adapter=adapter)
+    tool = PodcastTool(signal_adapter=adapter, llm=_make_llm())
     result = await tool.run(group_id="g1", podcast_type="econpod")
     assert "error" in result
     assert "source_url or attachment_path" in result["error"]
@@ -118,7 +127,7 @@ async def test_run_rejects_missing_source():
 @pytest.mark.asyncio
 async def test_run_returns_error_when_nlm_not_installed():
     adapter = _make_signal_adapter()
-    tool = PodcastTool(signal_adapter=adapter)
+    tool = PodcastTool(signal_adapter=adapter, llm=_make_llm())
 
     nlm_not_found = _make_process(returncode=1, stderr="command not found")
     with patch("asyncio.create_subprocess_exec", return_value=nlm_not_found):
@@ -126,6 +135,45 @@ async def test_run_returns_error_when_nlm_not_installed():
 
     assert "error" in result
     assert "uv tool install" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _extract_paper_title
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_paper_title_from_url():
+    llm = _make_llm("Attention Is All You Need")
+    title = await _extract_paper_title(llm, source_url="https://arxiv.org/abs/1706.03762", attachment_path=None)
+    assert title == "Attention Is All You Need"
+    llm.generate.assert_awaited_once()
+    prompt_used = llm.generate.call_args.args[0][0]["content"]
+    assert "https://arxiv.org/abs/1706.03762" in prompt_used
+
+
+@pytest.mark.asyncio
+async def test_extract_paper_title_from_attachment():
+    llm = _make_llm("Some Cool Paper")
+    title = await _extract_paper_title(llm, source_url=None, attachment_path="/tmp/some_cool_paper.pdf")
+    assert title == "Some Cool Paper"
+    prompt_used = llm.generate.call_args.args[0][0]["content"]
+    assert "some_cool_paper.pdf" in prompt_used
+
+
+@pytest.mark.asyncio
+async def test_extract_paper_title_returns_none_for_unknown():
+    llm = _make_llm(None)  # LLM returns "Unknown"
+    title = await _extract_paper_title(llm, source_url="https://example.com/paper.pdf", attachment_path=None)
+    assert title is None
+
+
+@pytest.mark.asyncio
+async def test_extract_paper_title_returns_none_on_llm_error():
+    llm = MagicMock()
+    llm.generate = AsyncMock(side_effect=Exception("LLM failure"))
+    title = await _extract_paper_title(llm, source_url="https://example.com/paper.pdf", attachment_path=None)
+    assert title is None
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +185,8 @@ async def test_run_returns_error_when_nlm_not_installed():
 async def test_run_happy_path_spawns_background_task():
     """Full success path: nlm installed, notebook created, source added, audio initiated."""
     adapter = _make_signal_adapter()
-    tool = PodcastTool(signal_adapter=adapter)
+    llm = _make_llm("Attention Is All You Need")
+    tool = PodcastTool(signal_adapter=adapter, llm=llm)
 
     notebook_resp = json.dumps({"id": "nb-001"})
     artifact_resp = json.dumps({"id": "art-001", "status": "generating"})
@@ -165,7 +214,7 @@ async def test_run_happy_path_spawns_background_task():
         result = await tool.run(group_id="g1", podcast_type="cspod", source_url="http://x.com/f.pdf")
 
     assert result["status"] == "started"
-    assert "cspod" in result["message"]
+    assert "Attention Is All You Need" in result["message"]
     assert len(created_tasks) == 1
 
 
@@ -207,10 +256,12 @@ async def test_poll_and_send_success(tmp_path: "os.PathLike[str]") -> None:
             artifact_id="art-1",
             podcast_type="econpod",
             output_path=output_path,
+            paper_title="Planet Money Special",
         )
 
     adapter.send_message.assert_awaited_once()
     call_kwargs = adapter.send_message.call_args
+    assert "Planet Money Special" in call_kwargs.args[1]
     assert call_kwargs.kwargs.get("attachment_path") == output_path or (
         len(call_kwargs.args) > 2 and call_kwargs.args[2] == output_path
     )
