@@ -676,10 +676,53 @@ dispatch() returns None for unrecognised commands so the AgentRuntime falls thro
 
 ## 8. Podcast tool — assistant/tools/podcast_tool.py
 
-The most involved tool. It wraps the NotebookLM CLI (nlm) to generate a deep-dive podcast from a PDF or URL.
+The most involved tool. It wraps the NotebookLM CLI (nlm) to generate a deep-dive podcast from a PDF or URL. PodcastTool takes both a SignalAdapter and an LLMProvider — the LLM is used to infer the paper title from the source before generation starts.
+
+`_extract_paper_title` is the helper that does the title lookup:
 
 ```bash
-sed -n '395,483p' assistant/tools/podcast_tool.py
+sed -n '255,286p' assistant/tools/podcast_tool.py
+```
+
+```output
+async def _extract_paper_title(
+    llm: LLMProvider,
+    source_url: str | None,
+    attachment_path: str | None,
+) -> str | None:
+    """Infer the paper title from its URL or filename via LLM."""
+    if source_url:
+        prompt = (
+            f"What is the title of the academic paper at this URL: {source_url}\n\n"
+            "Respond with ONLY the paper title, nothing else. "
+            "If you cannot determine the title, respond with 'Unknown'."
+        )
+    elif attachment_path:
+        filename = os.path.basename(attachment_path)
+        prompt = (
+            f"What is the title of an academic paper with filename: {filename}\n\n"
+            "Respond with ONLY the paper title, nothing else. "
+            "If you cannot determine the title, respond with 'Unknown'."
+        )
+    else:
+        return None
+
+    try:
+        response = await llm.generate([{"role": "user", "content": prompt}])
+        title = response.content.strip()
+        if title and title.lower() != "unknown":
+            return title
+    except Exception:
+        LOGGER.warning("Failed to extract paper title from LLM", exc_info=True)
+    return None
+```
+
+The helper sends a minimal single-turn prompt — URL or filename — and expects back just the paper title. It returns None if the LLM replies "Unknown" or if the call raises, so title failures never crash the pipeline.
+
+The full `run()` pipeline:
+
+```bash
+sed -n '434,529p' assistant/tools/podcast_tool.py
 ```
 
 ```output
@@ -749,7 +792,10 @@ sed -n '395,483p' assistant/tools/podcast_tool.py
             return {"error": f"Could not parse artifact ID from: {stdout!r}"}
         LOGGER.info("Podcast generation started, artifact %s", artifact_id)
 
-        # --- 5. Spawn background polling task ---
+        # --- 5. Extract paper title for personalised messages ---
+        paper_title = await _extract_paper_title(self._llm, source_url, attachment_path)
+
+        # --- 6. Spawn background polling task ---
         output_path = os.path.join(tempfile.gettempdir(), f"podcast_{notebook_id}.m4a")
         asyncio.create_task(
             _poll_and_send(
@@ -760,17 +806,22 @@ sed -n '395,483p' assistant/tools/podcast_tool.py
                 artifact_id=artifact_id,
                 podcast_type=podcast_type,
                 output_path=output_path,
+                paper_title=paper_title,
             ),
             name=f"podcast-{notebook_id}",
         )
 
-        return {
-            "status": "started",
-            "message": (
+        if paper_title:
+            started_msg = (
+                f"Podcast generation started for \"{paper_title}\". "
+                "I'll send the audio file when it's ready — usually 2–5 minutes."
+            )
+        else:
+            started_msg = (
                 f"Podcast generation started (type: {podcast_type}). "
                 "I'll send the audio file when it's ready — usually 2–5 minutes."
-            ),
-        }
+            )
+        return {"status": "started", "message": started_msg}
 ```
 
 The podcast pipeline has two phases:
@@ -781,13 +832,14 @@ The podcast pipeline has two phases:
 3. Add source (file or URL), wait for ingestion.
 4. Kick off audio generation with a type-specific focus prompt (econpod/cspod/ddpod), long format.
 5. Parse the artifact ID from the response.
-6. Spawn _poll_and_send() as an asyncio background task.
-7. Return immediately with a 'generation started' message.
+6. Call `_extract_paper_title` — one LLM call to infer the paper title from the URL or filename. Failures are swallowed; returns None if uncertain.
+7. Spawn _poll_and_send() as an asyncio background task, passing the title along.
+8. Return immediately — "Podcast generation started for '<title>'" if a title was found, or "Podcast generation started (type: <type>)" as fallback.
 
 **Background phase (_poll_and_send)**:
 - Polls nlm studio status every 30 seconds, up to 120 polls (60 minutes).
 - When the artifact status is completed/done/ready, downloads the .m4a to a temp file.
-- Sends the audio file to Signal via SignalAdapter.send_message(attachment_path=...).
+- Sends the audio file to Signal via SignalAdapter.send_message(attachment_path=...). The message is "Your podcast of '<title>' is ready!" if a title was captured, otherwise "Your <type> podcast is ready!".
 - Always deletes the notebook and temp file in the finally block, whether successful or not.
 - Sends failure messages to Signal if download fails or times out.
 
@@ -1172,7 +1224,7 @@ grep -n '' assistant/main.py
 57:        allowed_senders=allowed_senders(settings),
 58:    )
 59:
-60:    podcast_tool = PodcastTool(signal_adapter=signal_adapter)
+60:    podcast_tool = PodcastTool(signal_adapter=signal_adapter, llm=provider)
 61:    tools.register(podcast_tool)
 62:
 63:    price_tracker_tool: PriceTrackerTool | None = None
@@ -1250,7 +1302,7 @@ grep -n '' assistant/main.py
 The composition root. Notable points:
 - KagiSearchTool is instantiated twice: once for the ToolRegistry (LLM-driven searches) and once for the CommandDispatcher (@websearch). They are independent instances sharing the same API key.
 - PriceTrackerTool is optional — only created when BIGQUERY_PROJECT_ID is set.
-- PodcastTool is registered in the ToolRegistry (LLM can call create_podcast) AND passed to CommandDispatcher (@podcast command path).
+- PodcastTool is registered in the ToolRegistry (LLM can call create_podcast) AND passed to CommandDispatcher (@podcast command path). It receives both signal_adapter and llm=provider so it can make its own LLM call to infer the paper title.
 - The main loop catches Exception per message and returns a generic error reply rather than crashing the entire process.
 - asyncio.CancelledError is re-raised to ensure graceful shutdown propagates.
 - The scheduler task is cancelled in the finally block to avoid orphaned tasks.
@@ -1484,11 +1536,12 @@ What's not tested: days_back parameter on ReadNotesTool, ripgrep glob/file_type/
 
 ### test_podcast_tool.py and test_price_tracker_tool.py and test_ddg_search_tool.py and test_read_url_tool.py
 
-**test_podcast_tool.py** (12 tests):
-- Parser unit tests (7): _parse_notebook_id handles JSON object, JSON list, plain text, empty. _parse_artifact_id handles id/artifact_id/artifactId aliases, missing key. _find_completed_artifact checks by id + status, wrong id, non-ready status, list shape.
+**test_podcast_tool.py** (21 tests):
+- Parser unit tests (11): _parse_notebook_id handles JSON object, JSON list, plain text, empty. _parse_artifact_id handles id/artifact_id/artifactId aliases, missing key. _find_completed_artifact checks by id + status, wrong id, non-ready status, list shape.
 - PodcastTool.run() error paths (3): unknown type, missing source, nlm not installed.
-- PodcastTool.run() happy path (1): all four nlm calls succeed, background task is spawned (then cancelled to prevent it running in the test), result is {status: started}.
-- _poll_and_send (2): success case (polls generating then completed, downloads, sends with attachment, deletes notebook + temp file). Timeout case (all _MAX_POLLS return generating → sends timeout message to Signal).
+- _extract_paper_title (4): title extracted from URL (prompt contains the URL), title extracted from attachment path (prompt contains filename), returns None when LLM responds "Unknown", returns None when LLM call raises.
+- PodcastTool.run() happy path (1): all four nlm calls succeed, LLM returns a title, background task is spawned (then cancelled), result message contains the paper title.
+- _poll_and_send (2): success case (polls generating then completed, downloads, sends with attachment containing the paper title in the message, deletes notebook + temp file). Timeout case (all _MAX_POLLS return generating → sends timeout message to Signal).
 
 **test_price_tracker_tool.py** (7 tests):
 - @trackprice command: no attachment, not configured.
@@ -1519,12 +1572,12 @@ uv run pytest --tb=short -q 2>&1 | tail -20
 
 ```output
 warning: `VIRTUAL_ENV=/Users/tejaskale/Code/python-apple-fm-sdk/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
-........................................................................ [ 57%]
-......................................................                   [100%]
-126 passed in 0.59s
+........................................................................ [ 55%]
+..........................................................               [100%]
+130 passed in 0.84s
 ```
 
-All 126 tests pass in ~0.6 seconds — the test suite is fast because it doesn't touch real subprocesses (signal-cli, rg, fzf, nlm) or real network calls (Kagi, Jina, OpenRouter, BigQuery). Everything is mocked at the process/HTTP boundary.
+All 130 tests pass in under a second — the test suite is fast because it doesn't touch real subprocesses (signal-cli, rg, fzf, nlm) or real network calls (Kagi, Jina, OpenRouter, BigQuery). Everything is mocked at the process/HTTP boundary.
 
 ## Summary: message lifecycle
 
