@@ -66,7 +66,7 @@ Tools available to the LLM (called autonomously, not via @commands):
 |---|---|---|
 | Python | 3.12+ | `brew install python@3.12` |
 | uv | any | `brew install uv` |
-| JRE | 21+ | `brew install openjdk@21` |
+| JDK | 25+ | `brew install openjdk@25` |
 | signal-cli | latest | `brew install signal-cli` |
 | ripgrep | any | `brew install ripgrep` (optional, for ripgrep search tool) |
 | fzf | any | `brew install fzf` (optional, for fuzzy filter tool) |
