@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     signal_owner_number: str = Field(..., alias="SIGNAL_OWNER_NUMBER")
     # Comma-separated E.164 numbers allowed to send commands (defaults to owner only).
     signal_allowed_senders: str = Field(default="", alias="SIGNAL_ALLOWED_SENDERS")
-    signal_poll_interval_seconds: float = Field(default=2.0, alias="SIGNAL_POLL_INTERVAL_SECONDS")
+    signal_poll_interval_seconds: float = Field(default=30.0, alias="SIGNAL_POLL_INTERVAL_SECONDS")
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
     request_timeout_seconds: float = Field(default=30.0, alias="REQUEST_TIMEOUT_SECONDS")
