@@ -754,6 +754,7 @@ class TestCommandDispatcherMagazine:
 
     @pytest.mark.asyncio
     async def test_magazine_pending_epub_is_per_group(self):
+
         """Pending epub state is scoped to the group that listed chapters."""
         tool = _magazine_tool()
         dispatcher = CommandDispatcher(magazine_tool=tool)
@@ -767,3 +768,42 @@ class TestCommandDispatcherMagazine:
         )
         result = await dispatcher.dispatch(other_msg)
         assert result is None
+
+
+# ===========================================================================
+# CommandDispatcher.dispatch — @commands
+# ===========================================================================
+
+
+class TestCommandDispatcherCommands:
+    @pytest.mark.asyncio
+    async def test_commands_returns_help_text(self):
+        dispatcher = CommandDispatcher()
+        result = await dispatcher.dispatch(_msg("@commands"))
+        assert result is not None
+        for name in ("@podcast", "@websearch", "@magazine", "@trackprice", "@clear", "@commands"):
+            assert name in result
+
+    @pytest.mark.asyncio
+    async def test_commands_not_saved_to_history(self, tmp_path):
+        from unittest.mock import patch
+
+        from assistant.agent_runtime import AgentRuntime
+
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = FakeLLM()
+        dispatcher = CommandDispatcher()
+        runtime = AgentRuntime(
+            db=db,
+            llm=llm,
+            tool_registry=ToolRegistry(db),
+            memory_window_messages=10,
+            summary_trigger_messages=100,
+            request_timeout_seconds=5,
+            command_dispatcher=dispatcher,
+        )
+
+        with patch.object(db, "add_message") as mock_add:
+            await runtime.handle_message(_msg("@commands"))
+            mock_add.assert_not_called()

@@ -9,7 +9,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from assistant.commands import CommandDispatcher
+from assistant.commands import TRANSIENT_COMMANDS, CommandDispatcher, parse_command
 from assistant.db import Database
 from assistant.llm.base import LLMProvider
 from assistant.models import Message
@@ -46,6 +46,13 @@ class AgentRuntime:
 
     async def handle_message(self, message: Message) -> str:
         """Handle one inbound user message and return assistant reply."""
+
+        if self._command_dispatcher and message.text.startswith("@"):
+            parsed = parse_command(message.text)
+            if parsed and parsed[0] in TRANSIENT_COMMANDS:
+                cmd_reply = await self._command_dispatcher.dispatch(message)
+                if cmd_reply is not None:
+                    return _to_signal_formatting(cmd_reply)
 
         self._db.upsert_group(message.group_id)
         self._db.add_message(message.group_id, role="user", content=message.text, sender_id=message.sender_id)

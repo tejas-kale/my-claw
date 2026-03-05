@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from assistant.models import Message
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 _PODCAST_USAGE = f"Usage: @podcast <type> [url]\nValid types: {', '.join(PODCAST_TYPES)}"
+
+TRANSIENT_COMMANDS: frozenset[str] = frozenset({"commands"})
 
 
 def parse_command(text: str) -> tuple[str, list[str]] | None:
@@ -107,7 +110,17 @@ class CommandDispatcher:
             return await self._handle_trackprice(message)
         if command == "magazine":
             return await self._handle_magazine(args, message)
+        if command == "commands":
+            return self._handle_commands()
         return None
+
+    def _handle_commands(self) -> str:
+        data_path = Path(__file__).parent / "commands_help.json"
+        entries = json.loads(data_path.read_text())
+        lines = ["Available commands:"] + [
+            f"{e['usage']}  — {e['description']}" for e in entries
+        ]
+        return "\n".join(lines)
 
     def _handle_clear(self, group_id: str) -> str:
         if self._db is None:
