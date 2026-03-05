@@ -785,6 +785,13 @@ class TestCommandDispatcherCommands:
             assert name in result
 
     @pytest.mark.asyncio
+    async def test_commands_includes_cite(self):
+        dispatcher = CommandDispatcher()
+        result = await dispatcher.dispatch(_msg("@commands"))
+        assert result is not None
+        assert "@cite" in result
+
+    @pytest.mark.asyncio
     async def test_commands_not_saved_to_history(self, tmp_path):
         from unittest.mock import patch
 
@@ -807,3 +814,109 @@ class TestCommandDispatcherCommands:
         with patch.object(db, "add_message") as mock_add:
             await runtime.handle_message(_msg("@commands"))
             mock_add.assert_not_called()
+
+
+# ===========================================================================
+# CommandDispatcher.dispatch — @cite
+# ===========================================================================
+
+
+def _cite_tool() -> Any:
+    tool = MagicMock()
+    tool.status = AsyncMock(return_value="status output")
+    tool.list_papers = AsyncMock(return_value="paper list")
+    tool.add_paper = AsyncMock(return_value="Paper added.")
+    tool.run = AsyncMock(return_value="Citation discovery started for all active papers. Use @cite status to check progress.")
+    tool.citations = AsyncMock(return_value="citations output")
+    return tool
+
+
+class TestCommandDispatcherCite:
+    @pytest.mark.asyncio
+    async def test_cite_no_args_returns_usage(self):
+        dispatcher = CommandDispatcher(citation_tracker_tool=_cite_tool())
+        result = await dispatcher.dispatch(_msg("@cite"))
+        assert result is not None
+        assert "usage" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_cite_tool_not_configured_returns_error(self):
+        dispatcher = CommandDispatcher(citation_tracker_tool=None)
+        result = await dispatcher.dispatch(_msg("@cite status"))
+        assert result is not None
+        assert "not configured" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_cite_status_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite status"))
+        assert result == "status output"
+        tool.status.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cite_list_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite list"))
+        assert result == "paper list"
+        tool.list_papers.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cite_add_with_url_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite add https://example.com/paper"))
+        assert result == "Paper added."
+        tool.add_paper.assert_awaited_once_with("https://example.com/paper")
+
+    @pytest.mark.asyncio
+    async def test_cite_add_missing_arg_returns_usage(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite add"))
+        assert result is not None
+        assert "usage" in result.lower()
+        tool.add_paper.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cite_run_no_id_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite run"))
+        assert result is not None
+        assert "citation discovery started" in result.lower()
+        tool.run.assert_awaited_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_cite_run_with_id_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        await dispatcher.dispatch(_msg("@cite run abc123"))
+        tool.run.assert_awaited_once_with("abc123")
+
+    @pytest.mark.asyncio
+    async def test_cite_citations_calls_tool(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite citations abc123"))
+        assert result == "citations output"
+        tool.citations.assert_awaited_once_with("abc123")
+
+    @pytest.mark.asyncio
+    async def test_cite_citations_missing_id_returns_usage(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite citations"))
+        assert result is not None
+        assert "usage" in result.lower()
+        tool.citations.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cite_unknown_subcommand_returns_error(self):
+        tool = _cite_tool()
+        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+        result = await dispatcher.dispatch(_msg("@cite foobar"))
+        assert result is not None
+        assert "foobar" in result
+        assert "unknown" in result.lower()

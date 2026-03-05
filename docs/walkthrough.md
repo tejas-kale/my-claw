@@ -1057,6 +1057,12 @@ Recognised commands:
 - @trackprice — expects an attachment; calls PriceTrackerTool.run()
 - @magazine <epub> [chapter-number] — lists chapters or starts audio generation
 - @clear — wipes the group's message history and rolling summary
+- @cite <subcommand> — wraps the citation-tracker CLI: status, list, add, run (background), citations
+- @commands — lists all available @-commands without saving the exchange to history
+
+TRANSIENT_COMMANDS is a module-level frozenset (currently {"commands"}). Before persisting anything to SQLite, agent_runtime.py checks whether the command is transient; if so it dispatches and returns immediately, skipping both add_message calls. This keeps @commands out of the conversation context entirely.
+
+Command metadata lives in commands_help.json, a flat JSON array of {usage, description} objects. _handle_commands() reads that file at call time and formats the entries for Signal output.
 
 @magazine and the pending-digit flow:
 When @magazine <epub> is sent without a chapter number, chapters are listed and the epub name is stashed in _pending_epub[group_id]. The next plain-integer message from that group triggers generation. The if-condition in agent_runtime.py routes both @-prefixed messages AND plain digits to dispatch() so this works without changing the LLM path.
@@ -1078,329 +1084,375 @@ grep -n '' assistant/commands.py
 10:import json
 11:import logging
 12:import re
-13:from typing import TYPE_CHECKING, Any
-14:
-15:from assistant.models import Message
-16:from assistant.tools.podcast_tool import PODCAST_TYPES
-17:
-18:if TYPE_CHECKING:
-19:    from assistant.db import Database
-20:    from assistant.llm.base import LLMProvider
-21:    from assistant.tools.ddg_search_tool import DdgSearchTool
-22:    from assistant.tools.magazine_tool import MagazineTool
-23:    from assistant.tools.podcast_tool import PodcastTool
-24:    from assistant.tools.price_tracker_tool import PriceTrackerTool
-25:    from assistant.tools.read_url_tool import ReadUrlTool
-26:    from assistant.tools.web_search_tool import KagiSearchTool
-27:
-28:LOGGER = logging.getLogger(__name__)
+13:from pathlib import Path
+14:from typing import TYPE_CHECKING, Any
+15:
+16:from assistant.models import Message
+17:from assistant.tools.podcast_tool import PODCAST_TYPES
+18:
+19:if TYPE_CHECKING:
+20:    from assistant.db import Database
+21:    from assistant.llm.base import LLMProvider
+22:    from assistant.tools.citation_tracker_tool import CitationTrackerTool
+23:    from assistant.tools.ddg_search_tool import DdgSearchTool
+24:    from assistant.tools.magazine_tool import MagazineTool
+25:    from assistant.tools.podcast_tool import PodcastTool
+26:    from assistant.tools.price_tracker_tool import PriceTrackerTool
+27:    from assistant.tools.read_url_tool import ReadUrlTool
+28:    from assistant.tools.web_search_tool import KagiSearchTool
 29:
-30:_PODCAST_USAGE = f"Usage: @podcast <type> [url]\nValid types: {', '.join(PODCAST_TYPES)}"
+30:LOGGER = logging.getLogger(__name__)
 31:
-32:
-33:def parse_command(text: str) -> tuple[str, list[str]] | None:
-34:    """Split an @-prefixed message into (command, args).
+32:_PODCAST_USAGE = f"Usage: @podcast <type> [url]\nValid types: {', '.join(PODCAST_TYPES)}"
+33:
+34:TRANSIENT_COMMANDS: frozenset[str] = frozenset({"commands"})
 35:
-36:    Returns:
-37:        A (command, args) tuple where command is lowercased, or None if text
-38:        is not a valid @command.
-39:    """
-40:    text = text.strip()
-41:    if not text.startswith("@"):
-42:        return None
-43:    parts = text[1:].split()
-44:    if not parts:
-45:        return None
-46:    return parts[0].lower(), parts[1:]
-47:
-48:
-49:class CommandDispatcher:
-50:    """Routes @-prefixed messages to tool handlers, bypassing the LLM.
+36:
+37:def parse_command(text: str) -> tuple[str, list[str]] | None:
+38:    """Split an @-prefixed message into (command, args).
+39:
+40:    Returns:
+41:        A (command, args) tuple where command is lowercased, or None if text
+42:        is not a valid @command.
+43:    """
+44:    text = text.strip()
+45:    if not text.startswith("@"):
+46:        return None
+47:    parts = text[1:].split()
+48:    if not parts:
+49:        return None
+50:    return parts[0].lower(), parts[1:]
 51:
-52:    Returns None for unrecognised commands so the caller can fall through.
-53:    """
-54:
-55:    def __init__(
-56:        self,
-57:        podcast_tool: PodcastTool | None = None,
-58:        kagi_search_tool: KagiSearchTool | None = None,
-59:        ddg_search_tool: DdgSearchTool | None = None,
-60:        read_url_tool: ReadUrlTool | None = None,
-61:        llm: LLMProvider | None = None,
-62:        db: Database | None = None,
-63:        price_tracker_tool: PriceTrackerTool | None = None,
-64:        magazine_tool: MagazineTool | None = None,
-65:    ) -> None:
-66:        self._podcast_tool = podcast_tool
-67:        self._kagi_search_tool = kagi_search_tool
-68:        self._ddg_search_tool = ddg_search_tool
-69:        self._read_url_tool = read_url_tool
-70:        self._llm = llm
-71:        self._db = db
-72:        self._price_tracker_tool = price_tracker_tool
-73:        self._magazine_tool = magazine_tool
-74:        self._pending_epub: dict[str, str] = {}  # group_id -> epub
-75:
-76:    async def dispatch(self, message: Message) -> str | None:
-77:        """Dispatch a message to a command handler.
-78:
-79:        Returns:
-80:            A reply string for recognised commands, or None for unknown ones.
-81:        """
-82:        # Plain chapter number after a chapter-listing response.
-83:        stripped = message.text.strip()
-84:        if stripped.isdigit() and message.group_id in self._pending_epub:
-85:            epub = self._pending_epub.pop(message.group_id)
-86:            if self._magazine_tool is None:
-87:                return "Magazine tool is not configured."
-88:            return await self._magazine_tool.start_generation(
-89:                group_id=message.group_id,
-90:                is_group=message.is_group,
-91:                epub=epub,
-92:                chapter=stripped,
-93:            )
-94:
-95:        parsed = parse_command(message.text)
-96:        if parsed is None:
-97:            return None
-98:        command, args = parsed
-99:        LOGGER.info("Command dispatch: command=%r args=%r", command, args)
-100:        if command == "podcast":
-101:            return await self._handle_podcast(args, message)
-102:        if command == "websearch":
-103:            return await self._handle_websearch(args)
-104:        if command == "clear":
-105:            return self._handle_clear(message.group_id)
-106:        if command == "trackprice":
-107:            return await self._handle_trackprice(message)
-108:        if command == "magazine":
-109:            return await self._handle_magazine(args, message)
-110:        return None
-111:
-112:    def _handle_clear(self, group_id: str) -> str:
-113:        if self._db is None:
-114:            return "History clearing is not available."
-115:        self._db.clear_history(group_id)
-116:        return "Conversation history cleared."
-117:
-118:    async def _handle_websearch(self, args: list[str]) -> str:
-119:        if not args:
-120:            return "Usage: @websearch [ddg] <query>"
+52:
+53:class CommandDispatcher:
+54:    """Routes @-prefixed messages to tool handlers, bypassing the LLM.
+55:
+56:    Returns None for unrecognised commands so the caller can fall through.
+57:    """
+58:
+59:    def __init__(
+60:        self,
+61:        podcast_tool: PodcastTool | None = None,
+62:        kagi_search_tool: KagiSearchTool | None = None,
+63:        ddg_search_tool: DdgSearchTool | None = None,
+64:        read_url_tool: ReadUrlTool | None = None,
+65:        llm: LLMProvider | None = None,
+66:        db: Database | None = None,
+67:        price_tracker_tool: PriceTrackerTool | None = None,
+68:        magazine_tool: MagazineTool | None = None,
+69:        citation_tracker_tool: CitationTrackerTool | None = None,
+70:    ) -> None:
+71:        self._podcast_tool = podcast_tool
+72:        self._kagi_search_tool = kagi_search_tool
+73:        self._ddg_search_tool = ddg_search_tool
+74:        self._read_url_tool = read_url_tool
+75:        self._llm = llm
+76:        self._db = db
+77:        self._price_tracker_tool = price_tracker_tool
+78:        self._magazine_tool = magazine_tool
+79:        self._citation_tracker_tool = citation_tracker_tool
+80:        self._pending_epub: dict[str, str] = {}  # group_id -> epub
+81:
+82:    async def dispatch(self, message: Message) -> str | None:
+83:        """Dispatch a message to a command handler.
+84:
+85:        Returns:
+86:            A reply string for recognised commands, or None for unknown ones.
+87:        """
+88:        # Plain chapter number after a chapter-listing response.
+89:        stripped = message.text.strip()
+90:        if stripped.isdigit() and message.group_id in self._pending_epub:
+91:            epub = self._pending_epub.pop(message.group_id)
+92:            if self._magazine_tool is None:
+93:                return "Magazine tool is not configured."
+94:            return await self._magazine_tool.start_generation(
+95:                group_id=message.group_id,
+96:                is_group=message.is_group,
+97:                epub=epub,
+98:                chapter=stripped,
+99:            )
+100:
+101:        parsed = parse_command(message.text)
+102:        if parsed is None:
+103:            return None
+104:        command, args = parsed
+105:        LOGGER.info("Command dispatch: command=%r args=%r", command, args)
+106:        if command == "podcast":
+107:            return await self._handle_podcast(args, message)
+108:        if command == "websearch":
+109:            return await self._handle_websearch(args)
+110:        if command == "clear":
+111:            return self._handle_clear(message.group_id)
+112:        if command == "trackprice":
+113:            return await self._handle_trackprice(message)
+114:        if command == "magazine":
+115:            return await self._handle_magazine(args, message)
+116:        if command == "cite":
+117:            return await self._handle_cite(args)
+118:        if command == "commands":
+119:            return self._handle_commands()
+120:        return None
 121:
-122:        if args[0].lower() == "ddg":
-123:            tool = self._ddg_search_tool
-124:            query = " ".join(args[1:]).strip()
-125:            provider = "DDG"
-126:        else:
-127:            tool = self._kagi_search_tool
-128:            query = " ".join(args).strip()
-129:            provider = "Kagi"
-130:
-131:        if not query:
-132:            return "Usage: @websearch [ddg] <query>"
-133:        if tool is None:
-134:            return f"{provider} search is not configured."
-135:
-136:        # Step 1: Generate sub-queries via LLM.
-137:        sub_queries = [query]
-138:        if self._llm:
-139:            sub_queries = await self._generate_sub_queries(query)
-140:
-141:        # Step 2: Run all sub-queries in parallel.
-142:        search_results = await asyncio.gather(*[tool.run(query=q) for q in sub_queries])
-143:        combined_results = "\n\n=====\n\n".join(search_results)
-144:
-145:        if self._llm is None:
-146:            return combined_results
-147:
-148:        # Step 3: Rank results — LLM returns top URLs in order.
-149:        ranked_urls = await self._rank_results(query, combined_results)
-150:
-151:        # Step 4: Fetch up to 2 pages via Jina from ranked URLs.
-152:        jina_pages: list[str] = []
-153:        fetched_urls: list[str] = []
-154:        if self._read_url_tool:
-155:            for url in ranked_urls[:5]:
-156:                if len(jina_pages) >= 2:
-157:                    break
-158:                try:
-159:                    page = await self._read_url_tool.run(url=url)
-160:                except Exception as exc:
-161:                    LOGGER.warning("Jina error for %s: %s", url, exc)
-162:                    continue
-163:                if not page.startswith("Failed to read URL"):
-164:                    jina_pages.append(page)
-165:                    fetched_urls.append(url)
-166:                else:
-167:                    LOGGER.warning("Jina failed for %s", url)
-168:
-169:        # Step 5: Synthesize final answer.
-170:        context = combined_results
-171:        if jina_pages:
-172:            pages_section = "\n\n".join(
-173:                f"--- Page {i + 1} ---\n{p}" for i, p in enumerate(jina_pages)
-174:            )
-175:            context += f"\n\n=== Full page content ===\n{pages_section}"
-176:
-177:        messages = [
-178:            {
-179:                "role": "system",
-180:                "content": (
-181:                    "You are a search result summariser. "
-182:                    "Answer using ONLY the information in the search results provided. "
-183:                    "Do not add facts from your training data. "
-184:                    "If the results do not contain enough information to answer fully, say so explicitly. "
-185:                    "Reply in plain text only — no markdown, no bullet points, no headers."
-186:                ),
-187:            },
-188:            {
-189:                "role": "user",
-190:                "content": f"Search results for '{query}':\n\n{context}\n\nSummarise the key information.",
-191:            },
-192:        ]
-193:        response = await self._llm.generate(messages)
-194:        answer = response.content
-195:
-196:        reference_urls = fetched_urls or ranked_urls[:3]
-197:        if reference_urls:
-198:            refs = "\n".join(f"{i + 1}. {u}" for i, u in enumerate(reference_urls))
-199:            return f"{answer}\n\nReferences:\n{refs}"
-200:        return answer
-201:
-202:    async def _generate_sub_queries(self, query: str) -> list[str]:
-203:        messages = [
-204:            {
-205:                "role": "system",
-206:                "content": (
-207:                    "Generate 1-5 precise sub-queries optimised for search engines. "
-208:                    "Always prefer fewer queries — only add more if the original query is complex "
-209:                    "and genuinely benefits from multiple angles. "
-210:                    'Return JSON only: {"queries": ["query1", ...]}'
-211:                ),
-212:            },
-213:            {"role": "user", "content": query},
-214:        ]
-215:        try:
-216:            response = await self._llm.generate(
-217:                messages, response_format={"type": "json_object"}
-218:            )
-219:            data = json.loads(response.content)
-220:            queries = [str(q) for q in data.get("queries", []) if q][:5]
-221:            return queries or [query]
-222:        except Exception:
-223:            LOGGER.warning("Sub-query generation failed, falling back to original query")
-224:            return [query]
-225:
-226:    async def _rank_results(self, query: str, combined_results: str) -> list[str]:
-227:        messages = [
-228:            {
-229:                "role": "system",
-230:                "content": (
-231:                    "You are ranking search results by relevance. "
-232:                    "Return the top 5 most relevant URLs in descending order of relevance. "
-233:                    'Return JSON only: {"urls": ["url1", ...]}'
-234:                ),
-235:            },
-236:            {
-237:                "role": "user",
-238:                "content": f"Query: {query}\n\nSearch results:\n{combined_results}",
-239:            },
-240:        ]
-241:        try:
-242:            response = await self._llm.generate(
-243:                messages, response_format={"type": "json_object"}
-244:            )
-245:            data = json.loads(response.content)
-246:            return [str(u) for u in data.get("urls", []) if u][:5]
-247:        except Exception:
-248:            LOGGER.warning("Result ranking failed, falling back to URL order from results")
-249:            return re.findall(r"^(https?://\S+)$", combined_results, re.MULTILINE)[:5]
-250:
-251:    async def _handle_trackprice(self, message: Message) -> str:
-252:        if not message.attachments:
-253:            return "Please attach a receipt image or PDF."
-254:        if self._price_tracker_tool is None:
-255:            return "Price tracker is not configured."
-256:        attachment = message.attachments[0]
-257:        path = attachment.get("local_path", "")
-258:        content_type = attachment.get("content_type", "image/jpeg")
-259:        result = await self._price_tracker_tool.run(path, content_type)
-260:        if "error" in result:
-261:            return f"Price tracking failed: {result['error']}"
-262:        return result.get("message", "Receipt saved.")
-263:
-264:    async def _handle_magazine(self, args: list[str], message: Message) -> str:
-265:        if self._magazine_tool is None:
-266:            return "Magazine tool is not configured."
-267:        if not args:
-268:            return "Usage: @magazine <epub> [chapter-number]"
-269:
-270:        # If the last arg is a chapter number, split it off; otherwise all args
-271:        # form the epub name/ID. This lets multi-word source names work correctly
-272:        # (e.g. "@magazine The Blizzard" or "@magazine The Blizzard 3").
-273:        if len(args) > 1 and args[-1].isdigit():
-274:            epub = " ".join(args[:-1])
-275:            chapter = args[-1]
-276:            return await self._magazine_tool.start_generation(
-277:                group_id=message.group_id,
-278:                is_group=message.is_group,
-279:                epub=epub,
-280:                chapter=chapter,
-281:            )
-282:
-283:        epub = " ".join(args)
-284:        chapters = await self._magazine_tool.list_chapters(epub)
-285:        self._pending_epub[message.group_id] = epub
-286:        return f"{chapters}\n\nReply with a chapter number to generate audio."
-287:
-288:    async def _handle_podcast(self, args: list[str], message: Message) -> str:
-289:        if self._podcast_tool is None:
-290:            return "Podcast tool is not configured."
-291:        if not args:
-292:            return _PODCAST_USAGE
-293:
-294:        podcast_type = args[0]
-295:        if podcast_type not in PODCAST_TYPES:
-296:            return f"Unknown podcast type '{podcast_type}'.\n{_PODCAST_USAGE}"
-297:
-298:        # URL wins over attachment when both are present.
-299:        source_url: str | None = next((a for a in args[1:] if a.startswith("http")), None)
-300:        attachment_path: str | None = (
-301:            None if source_url else (
-302:                message.attachments[0]["local_path"] if message.attachments else None
-303:            )
-304:        )
+122:    async def _handle_cite(self, args: list[str]) -> str:
+123:        if self._citation_tracker_tool is None:
+124:            return "Citation tracker is not configured."
+125:        _USAGE = "Usage: @cite <status|list|add <url-or-doi>|run [id]|citations <id>>"
+126:        if not args:
+127:            return _USAGE
+128:        sub = args[0].lower()
+129:        if sub == "status":
+130:            return await self._citation_tracker_tool.status()
+131:        if sub == "list":
+132:            return await self._citation_tracker_tool.list_papers()
+133:        if sub == "add":
+134:            if len(args) < 2:
+135:                return "Usage: @cite add <url-or-doi>"
+136:            return await self._citation_tracker_tool.add_paper(args[1])
+137:        if sub == "run":
+138:            paper_id = args[1] if len(args) > 1 else None
+139:            return await self._citation_tracker_tool.run(paper_id)
+140:        if sub == "citations":
+141:            if len(args) < 2:
+142:                return "Usage: @cite citations <id>"
+143:            return await self._citation_tracker_tool.citations(args[1])
+144:        return f"Unknown subcommand '{sub}'. {_USAGE}"
+145:
+146:    def _handle_commands(self) -> str:
+147:        data_path = Path(__file__).parent / "commands_help.json"
+148:        entries = json.loads(data_path.read_text())
+149:        lines = ["Available commands:"] + [
+150:            f"{e['usage']}  — {e['description']}" for e in entries
+151:        ]
+152:        return "\n".join(lines)
+153:
+154:    def _handle_clear(self, group_id: str) -> str:
+155:        if self._db is None:
+156:            return "History clearing is not available."
+157:        self._db.clear_history(group_id)
+158:        return "Conversation history cleared."
+159:
+160:    async def _handle_websearch(self, args: list[str]) -> str:
+161:        if not args:
+162:            return "Usage: @websearch [ddg] <query>"
+163:
+164:        if args[0].lower() == "ddg":
+165:            tool = self._ddg_search_tool
+166:            query = " ".join(args[1:]).strip()
+167:            provider = "DDG"
+168:        else:
+169:            tool = self._kagi_search_tool
+170:            query = " ".join(args).strip()
+171:            provider = "Kagi"
+172:
+173:        if not query:
+174:            return "Usage: @websearch [ddg] <query>"
+175:        if tool is None:
+176:            return f"{provider} search is not configured."
+177:
+178:        # Step 1: Generate sub-queries via LLM.
+179:        sub_queries = [query]
+180:        if self._llm:
+181:            sub_queries = await self._generate_sub_queries(query)
+182:
+183:        # Step 2: Run all sub-queries in parallel.
+184:        search_results = await asyncio.gather(*[tool.run(query=q) for q in sub_queries])
+185:        combined_results = "\n\n=====\n\n".join(search_results)
+186:
+187:        if self._llm is None:
+188:            return combined_results
+189:
+190:        # Step 3: Rank results — LLM returns top URLs in order.
+191:        ranked_urls = await self._rank_results(query, combined_results)
+192:
+193:        # Step 4: Fetch up to 2 pages via Jina from ranked URLs.
+194:        jina_pages: list[str] = []
+195:        fetched_urls: list[str] = []
+196:        if self._read_url_tool:
+197:            for url in ranked_urls[:5]:
+198:                if len(jina_pages) >= 2:
+199:                    break
+200:                try:
+201:                    page = await self._read_url_tool.run(url=url)
+202:                except Exception as exc:
+203:                    LOGGER.warning("Jina error for %s: %s", url, exc)
+204:                    continue
+205:                if not page.startswith("Failed to read URL"):
+206:                    jina_pages.append(page)
+207:                    fetched_urls.append(url)
+208:                else:
+209:                    LOGGER.warning("Jina failed for %s", url)
+210:
+211:        # Step 5: Synthesize final answer.
+212:        context = combined_results
+213:        if jina_pages:
+214:            pages_section = "\n\n".join(
+215:                f"--- Page {i + 1} ---\n{p}" for i, p in enumerate(jina_pages)
+216:            )
+217:            context += f"\n\n=== Full page content ===\n{pages_section}"
+218:
+219:        messages = [
+220:            {
+221:                "role": "system",
+222:                "content": (
+223:                    "You are a search result summariser. "
+224:                    "Answer using ONLY the information in the search results provided. "
+225:                    "Do not add facts from your training data. "
+226:                    "If the results do not contain enough information to answer fully, say so explicitly. "
+227:                    "Reply in plain text only — no markdown, no bullet points, no headers."
+228:                ),
+229:            },
+230:            {
+231:                "role": "user",
+232:                "content": f"Search results for '{query}':\n\n{context}\n\nSummarise the key information.",
+233:            },
+234:        ]
+235:        response = await self._llm.generate(messages)
+236:        answer = response.content
+237:
+238:        reference_urls = fetched_urls or ranked_urls[:3]
+239:        if reference_urls:
+240:            refs = "\n".join(f"{i + 1}. {u}" for i, u in enumerate(reference_urls))
+241:            return f"{answer}\n\nReferences:\n{refs}"
+242:        return answer
+243:
+244:    async def _generate_sub_queries(self, query: str) -> list[str]:
+245:        messages = [
+246:            {
+247:                "role": "system",
+248:                "content": (
+249:                    "Generate 1-5 precise sub-queries optimised for search engines. "
+250:                    "Always prefer fewer queries — only add more if the original query is complex "
+251:                    "and genuinely benefits from multiple angles. "
+252:                    'Return JSON only: {"queries": ["query1", ...]}'
+253:                ),
+254:            },
+255:            {"role": "user", "content": query},
+256:        ]
+257:        try:
+258:            response = await self._llm.generate(
+259:                messages, response_format={"type": "json_object"}
+260:            )
+261:            data = json.loads(response.content)
+262:            queries = [str(q) for q in data.get("queries", []) if q][:5]
+263:            return queries or [query]
+264:        except Exception:
+265:            LOGGER.warning("Sub-query generation failed, falling back to original query")
+266:            return [query]
+267:
+268:    async def _rank_results(self, query: str, combined_results: str) -> list[str]:
+269:        messages = [
+270:            {
+271:                "role": "system",
+272:                "content": (
+273:                    "You are ranking search results by relevance. "
+274:                    "Return the top 5 most relevant URLs in descending order of relevance. "
+275:                    'Return JSON only: {"urls": ["url1", ...]}'
+276:                ),
+277:            },
+278:            {
+279:                "role": "user",
+280:                "content": f"Query: {query}\n\nSearch results:\n{combined_results}",
+281:            },
+282:        ]
+283:        try:
+284:            response = await self._llm.generate(
+285:                messages, response_format={"type": "json_object"}
+286:            )
+287:            data = json.loads(response.content)
+288:            return [str(u) for u in data.get("urls", []) if u][:5]
+289:        except Exception:
+290:            LOGGER.warning("Result ranking failed, falling back to URL order from results")
+291:            return re.findall(r"^(https?://\S+)$", combined_results, re.MULTILINE)[:5]
+292:
+293:    async def _handle_trackprice(self, message: Message) -> str:
+294:        if not message.attachments:
+295:            return "Please attach a receipt image or PDF."
+296:        if self._price_tracker_tool is None:
+297:            return "Price tracker is not configured."
+298:        attachment = message.attachments[0]
+299:        path = attachment.get("local_path", "")
+300:        content_type = attachment.get("content_type", "image/jpeg")
+301:        result = await self._price_tracker_tool.run(path, content_type)
+302:        if "error" in result:
+303:            return f"Price tracking failed: {result['error']}"
+304:        return result.get("message", "Receipt saved.")
 305:
-306:        if not source_url and not attachment_path:
-307:            return f"Attach a PDF or provide a URL.\n{_PODCAST_USAGE}"
-308:
-309:        kwargs: dict[str, Any] = {
-310:            "group_id": message.group_id,
-311:            "is_group": message.is_group,
-312:            "podcast_type": podcast_type,
-313:        }
-314:        if source_url:
-315:            kwargs["source_url"] = source_url
-316:        if attachment_path:
-317:            kwargs["attachment_path"] = attachment_path
-318:
-319:        result = await self._podcast_tool.run(**kwargs)
-320:        if "error" in result:
-321:            return f"Podcast failed: {result['error']}"
-322:        return result.get("message", "Podcast generation started.")
+306:    async def _handle_magazine(self, args: list[str], message: Message) -> str:
+307:        if self._magazine_tool is None:
+308:            return "Magazine tool is not configured."
+309:        if not args:
+310:            return "Usage: @magazine <epub> [chapter-number]"
+311:
+312:        # If the last arg is a chapter number, split it off; otherwise all args
+313:        # form the epub name/ID. This lets multi-word source names work correctly
+314:        # (e.g. "@magazine The Blizzard" or "@magazine The Blizzard 3").
+315:        if len(args) > 1 and args[-1].isdigit():
+316:            epub = " ".join(args[:-1])
+317:            chapter = args[-1]
+318:            return await self._magazine_tool.start_generation(
+319:                group_id=message.group_id,
+320:                is_group=message.is_group,
+321:                epub=epub,
+322:                chapter=chapter,
+323:            )
+324:
+325:        epub = " ".join(args)
+326:        chapters = await self._magazine_tool.list_chapters(epub)
+327:        self._pending_epub[message.group_id] = epub
+328:        return f"{chapters}\n\nReply with a chapter number to generate audio."
+329:
+330:    async def _handle_podcast(self, args: list[str], message: Message) -> str:
+331:        if self._podcast_tool is None:
+332:            return "Podcast tool is not configured."
+333:        if not args:
+334:            return _PODCAST_USAGE
+335:
+336:        podcast_type = args[0]
+337:        if podcast_type not in PODCAST_TYPES:
+338:            return f"Unknown podcast type '{podcast_type}'.\n{_PODCAST_USAGE}"
+339:
+340:        # URL wins over attachment when both are present.
+341:        source_url: str | None = next((a for a in args[1:] if a.startswith("http")), None)
+342:        attachment_path: str | None = (
+343:            None if source_url else (
+344:                message.attachments[0]["local_path"] if message.attachments else None
+345:            )
+346:        )
+347:
+348:        if not source_url and not attachment_path:
+349:            return f"Attach a PDF or provide a URL.\n{_PODCAST_USAGE}"
+350:
+351:        kwargs: dict[str, Any] = {
+352:            "group_id": message.group_id,
+353:            "is_group": message.is_group,
+354:            "podcast_type": podcast_type,
+355:        }
+356:        if source_url:
+357:            kwargs["source_url"] = source_url
+358:        if attachment_path:
+359:            kwargs["attachment_path"] = attachment_path
+360:
+361:        result = await self._podcast_tool.run(**kwargs)
+362:        if "error" in result:
+363:            return f"Podcast failed: {result['error']}"
+364:        return result.get("message", "Podcast generation started.")
 ```
 
 ### Tests — tests/test_commands.py
 
-The command tests cover three things: the parse_command() function, the dispatch routing table, and each command handler.
+The command tests cover four areas: the parse_command() function, the dispatch routing table, each command handler, and the transient @commands behaviour.
 
 parse_command tests verify whitespace stripping, case-folding of the command keyword (args are left as-is), and that bare @ or non-@ text returns None.
 
 Dispatcher routing tests confirm that non-@ messages return None, unknown @commands return None, and the runtime correctly falls through to the LLM for both.
 
-Handler tests use AsyncMock stubs for every dependency (search tools, LLM, podcast tool, magazine tool). The websearch tests are the most involved — they mock the 3-call LLM flow (sub-query generation → URL ranking → synthesis) and verify each stage independently: that sub-queries are used, that Jina is called for ranked URLs, that it stops after 2 successful Jina fetches, and that references are appended.
+Handler tests use AsyncMock stubs for every dependency (search tools, LLM, podcast tool, magazine tool, citation tracker tool). The websearch tests are the most involved — they mock the 3-call LLM flow (sub-query generation → URL ranking → synthesis) and verify each stage independently: that sub-queries are used, that Jina is called for ranked URLs, that it stops after 2 successful Jina fetches, and that references are appended.
 
 Magazine tests cover the multi-word epub ambiguity fix: assert that a trailing digit is split off as the chapter number while earlier words stay as the epub name, and that no trailing digit means list-chapters. The pending-digit tests send two messages in sequence and verify the second (plain integer) triggers start_generation with the epub stashed from the first.
+
+@commands tests verify the help text is returned, that @cite appears in the listing, and that the exchange is NOT persisted to history (patch.object on db.add_message asserts it is never called).
+
+@cite tests use a _cite_tool() helper (MagicMock with AsyncMock methods) covering all five subcommands: status, list, add, run (with and without a paper ID), citations. Missing-argument cases return usage strings; an unknown subcommand returns an error naming the bad subcommand. 79 total tests.
 
 ```bash
 grep -n '' tests/test_commands.py
@@ -2163,20 +2215,214 @@ grep -n '' tests/test_commands.py
 754:
 755:    @pytest.mark.asyncio
 756:    async def test_magazine_pending_epub_is_per_group(self):
-757:        """Pending epub state is scoped to the group that listed chapters."""
-758:        tool = _magazine_tool()
-759:        dispatcher = CommandDispatcher(magazine_tool=tool)
-760:        await dispatcher.dispatch(_msg("@magazine blizzard"))  # group-1
-761:        # A digit from a different group should not trigger generation.
-762:        other_msg = Message(
-763:            group_id="group-2",
-764:            sender_id="user-1",
-765:            text="9",
-766:            timestamp=_msg("").timestamp,
-767:        )
-768:        result = await dispatcher.dispatch(other_msg)
-769:        assert result is None
+757:
+758:        """Pending epub state is scoped to the group that listed chapters."""
+759:        tool = _magazine_tool()
+760:        dispatcher = CommandDispatcher(magazine_tool=tool)
+761:        await dispatcher.dispatch(_msg("@magazine blizzard"))  # group-1
+762:        # A digit from a different group should not trigger generation.
+763:        other_msg = Message(
+764:            group_id="group-2",
+765:            sender_id="user-1",
+766:            text="9",
+767:            timestamp=_msg("").timestamp,
+768:        )
+769:        result = await dispatcher.dispatch(other_msg)
+770:        assert result is None
+771:
+772:
+773:# ===========================================================================
+774:# CommandDispatcher.dispatch — @commands
+775:# ===========================================================================
+776:
+777:
+778:class TestCommandDispatcherCommands:
+779:    @pytest.mark.asyncio
+780:    async def test_commands_returns_help_text(self):
+781:        dispatcher = CommandDispatcher()
+782:        result = await dispatcher.dispatch(_msg("@commands"))
+783:        assert result is not None
+784:        for name in ("@podcast", "@websearch", "@magazine", "@trackprice", "@clear", "@commands"):
+785:            assert name in result
+786:
+787:    @pytest.mark.asyncio
+788:    async def test_commands_includes_cite(self):
+789:        dispatcher = CommandDispatcher()
+790:        result = await dispatcher.dispatch(_msg("@commands"))
+791:        assert result is not None
+792:        assert "@cite" in result
+793:
+794:    @pytest.mark.asyncio
+795:    async def test_commands_not_saved_to_history(self, tmp_path):
+796:        from unittest.mock import patch
+797:
+798:        from assistant.agent_runtime import AgentRuntime
+799:
+800:        db = Database(tmp_path / "assistant.db")
+801:        db.initialize()
+802:        llm = FakeLLM()
+803:        dispatcher = CommandDispatcher()
+804:        runtime = AgentRuntime(
+805:            db=db,
+806:            llm=llm,
+807:            tool_registry=ToolRegistry(db),
+808:            memory_window_messages=10,
+809:            summary_trigger_messages=100,
+810:            request_timeout_seconds=5,
+811:            command_dispatcher=dispatcher,
+812:        )
+813:
+814:        with patch.object(db, "add_message") as mock_add:
+815:            await runtime.handle_message(_msg("@commands"))
+816:            mock_add.assert_not_called()
+817:
+818:
+819:# ===========================================================================
+820:# CommandDispatcher.dispatch — @cite
+821:# ===========================================================================
+822:
+823:
+824:def _cite_tool() -> Any:
+825:    tool = MagicMock()
+826:    tool.status = AsyncMock(return_value="status output")
+827:    tool.list_papers = AsyncMock(return_value="paper list")
+828:    tool.add_paper = AsyncMock(return_value="Paper added.")
+829:    tool.run = AsyncMock(return_value="Citation discovery started for all active papers. Use @cite status to check progress.")
+830:    tool.citations = AsyncMock(return_value="citations output")
+831:    return tool
+832:
+833:
+834:class TestCommandDispatcherCite:
+835:    @pytest.mark.asyncio
+836:    async def test_cite_no_args_returns_usage(self):
+837:        dispatcher = CommandDispatcher(citation_tracker_tool=_cite_tool())
+838:        result = await dispatcher.dispatch(_msg("@cite"))
+839:        assert result is not None
+840:        assert "usage" in result.lower()
+841:
+842:    @pytest.mark.asyncio
+843:    async def test_cite_tool_not_configured_returns_error(self):
+844:        dispatcher = CommandDispatcher(citation_tracker_tool=None)
+845:        result = await dispatcher.dispatch(_msg("@cite status"))
+846:        assert result is not None
+847:        assert "not configured" in result.lower()
+848:
+849:    @pytest.mark.asyncio
+850:    async def test_cite_status_calls_tool(self):
+851:        tool = _cite_tool()
+852:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+853:        result = await dispatcher.dispatch(_msg("@cite status"))
+854:        assert result == "status output"
+855:        tool.status.assert_awaited_once()
+856:
+857:    @pytest.mark.asyncio
+858:    async def test_cite_list_calls_tool(self):
+859:        tool = _cite_tool()
+860:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+861:        result = await dispatcher.dispatch(_msg("@cite list"))
+862:        assert result == "paper list"
+863:        tool.list_papers.assert_awaited_once()
+864:
+865:    @pytest.mark.asyncio
+866:    async def test_cite_add_with_url_calls_tool(self):
+867:        tool = _cite_tool()
+868:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+869:        result = await dispatcher.dispatch(_msg("@cite add https://example.com/paper"))
+870:        assert result == "Paper added."
+871:        tool.add_paper.assert_awaited_once_with("https://example.com/paper")
+872:
+873:    @pytest.mark.asyncio
+874:    async def test_cite_add_missing_arg_returns_usage(self):
+875:        tool = _cite_tool()
+876:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+877:        result = await dispatcher.dispatch(_msg("@cite add"))
+878:        assert result is not None
+879:        assert "usage" in result.lower()
+880:        tool.add_paper.assert_not_called()
+881:
+882:    @pytest.mark.asyncio
+883:    async def test_cite_run_no_id_calls_tool(self):
+884:        tool = _cite_tool()
+885:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+886:        result = await dispatcher.dispatch(_msg("@cite run"))
+887:        assert result is not None
+888:        assert "citation discovery started" in result.lower()
+889:        tool.run.assert_awaited_once_with(None)
+890:
+891:    @pytest.mark.asyncio
+892:    async def test_cite_run_with_id_calls_tool(self):
+893:        tool = _cite_tool()
+894:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+895:        await dispatcher.dispatch(_msg("@cite run abc123"))
+896:        tool.run.assert_awaited_once_with("abc123")
+897:
+898:    @pytest.mark.asyncio
+899:    async def test_cite_citations_calls_tool(self):
+900:        tool = _cite_tool()
+901:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+902:        result = await dispatcher.dispatch(_msg("@cite citations abc123"))
+903:        assert result == "citations output"
+904:        tool.citations.assert_awaited_once_with("abc123")
+905:
+906:    @pytest.mark.asyncio
+907:    async def test_cite_citations_missing_id_returns_usage(self):
+908:        tool = _cite_tool()
+909:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+910:        result = await dispatcher.dispatch(_msg("@cite citations"))
+911:        assert result is not None
+912:        assert "usage" in result.lower()
+913:        tool.citations.assert_not_called()
+914:
+915:    @pytest.mark.asyncio
+916:    async def test_cite_unknown_subcommand_returns_error(self):
+917:        tool = _cite_tool()
+918:        dispatcher = CommandDispatcher(citation_tracker_tool=tool)
+919:        result = await dispatcher.dispatch(_msg("@cite foobar"))
+920:        assert result is not None
+921:        assert "foobar" in result
+922:        assert "unknown" in result.lower()
 ```
+
+commands_help.json is a flat JSON array of {usage, description} objects — one entry per @command. _handle_commands() reads it at call time, formats it, and returns the listing to Signal. Adding a new command means adding one entry here; no Python changes needed.
+
+```bash
+grep -n '' assistant/commands_help.json
+```
+
+```output
+1:[
+2:  {
+3:    "usage": "@cite <status|list|add <url>|run [id]|citations <id>>",
+4:    "description": "Manage citation tracking: discover, list, and add papers."
+5:  },
+6:  {
+7:    "usage": "@podcast <type> [url]",
+8:    "description": "Create a podcast from a URL or PDF attachment."
+9:  },
+10:  {
+11:    "usage": "@websearch [ddg] <query>",
+12:    "description": "Search the web via Kagi (or DuckDuckGo with ddg prefix)."
+13:  },
+14:  {
+15:    "usage": "@magazine <epub> [chapter]",
+16:    "description": "List chapters or generate audio from a magazine chapter."
+17:  },
+18:  {
+19:    "usage": "@trackprice",
+20:    "description": "Extract and save line items from a receipt (attach image/PDF)."
+21:  },
+22:  {
+23:    "usage": "@clear",
+24:    "description": "Clear conversation history for this chat."
+25:  },
+26:  {
+27:    "usage": "@commands",
+28:    "description": "Show this list."
+29:  }
+30:]
+```
+
+
 
 ## 8. LLM Layer — assistant/llm/
 
@@ -5759,19 +6005,102 @@ grep -n '' tests/test_agent_runtime.py
 226:        tool.run.assert_called_once()
 ```
 
-## 17. End-to-End Flow Summary
+
+## 17. Citation Tracker Tool — assistant/tools/citation_tracker_tool.py
+
+CitationTrackerTool wraps the `citation-tracker` CLI. It is a plain class (not a Tool subclass) because it is command-only — never called by the LLM.
+
+All five subcommands map directly to CLI invocations via _run_ct(), an async helper that creates a subprocess, waits for output with asyncio.wait_for, and returns (returncode, stdout, stderr). Quick commands (status, list, add, citations) use a 60-second timeout. run() is the exception: it fires asyncio.create_task with a 1-hour timeout and returns an ack immediately, matching the non-blocking pattern used by @podcast and @magazine.
+
+Source routing in add_paper(): a source starting with "10." is treated as a DOI (--doi flag), "http..." is a plain URL (no flag), anything else is a Semantic Scholar ID (--ss-id flag).
+
+```bash
+grep -n '' assistant/tools/citation_tracker_tool.py
+```
+
+```output
+1:"""Async wrapper around the citation-tracker CLI."""
+2:
+3:from __future__ import annotations
+4:
+5:import asyncio
+6:import logging
+7:
+8:LOGGER = logging.getLogger(__name__)
+9:_CT_TIMEOUT = 60  # seconds for quick commands (status, list, add, citations)
+10:
+11:
+12:async def _run_ct(*args: str, timeout: int = _CT_TIMEOUT) -> tuple[int, str, str]:
+13:    """Run `citation-tracker <args>`, return (returncode, stdout, stderr)."""
+14:    proc = await asyncio.create_subprocess_exec(
+15:        "citation-tracker",
+16:        *args,
+17:        stdout=asyncio.subprocess.PIPE,
+18:        stderr=asyncio.subprocess.PIPE,
+19:    )
+20:    try:
+21:        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+22:    except asyncio.TimeoutError:
+23:        proc.kill()
+24:        await proc.communicate()
+25:        return 1, "", f"citation-tracker timed out after {timeout}s"
+26:    return proc.returncode, stdout_b.decode(), stderr_b.decode()
+27:
+28:
+29:class CitationTrackerTool:
+30:    """Wraps citation-tracker CLI subcommands for use in @cite command."""
+31:
+32:    async def status(self) -> str:
+33:        rc, out, err = await _run_ct("status")
+34:        return out.strip() or err.strip() or "No output."
+35:
+36:    async def list_papers(self) -> str:
+37:        rc, out, err = await _run_ct("list")
+38:        return out.strip() or err.strip() or "No tracked papers."
+39:
+40:    async def add_paper(self, source: str) -> str:
+41:        """source is a URL, DOI (10.xxx/xxx), or Semantic Scholar ID."""
+42:        if source.startswith("10."):
+43:            args = ("add", "--doi", source)
+44:        elif source.startswith("http"):
+45:            args = ("add", source)
+46:        else:
+47:            args = ("add", "--ss-id", source)
+48:        rc, out, err = await _run_ct(*args)
+49:        if rc != 0:
+50:            return f"Failed to add paper: {err.strip() or out.strip()}"
+51:        return out.strip() or "Paper added."
+52:
+53:    async def citations(self, paper_id: str) -> str:
+54:        rc, out, err = await _run_ct("citations", "--id", paper_id)
+55:        if rc != 0:
+56:            return f"Failed: {err.strip() or out.strip()}"
+57:        return out.strip() or "No citations found."
+58:
+59:    async def run(self, paper_id: str | None = None) -> str:
+60:        """Fire the discovery pipeline in the background; return ack immediately."""
+61:        args = ("run",) if paper_id is None else ("run", "--id", paper_id)
+62:        asyncio.create_task(_run_ct(*args, timeout=3600))
+63:        target = "all active papers" if paper_id is None else paper_id
+64:        return f"Citation discovery started for {target}. Use @cite status to check progress."
+```
+
+## 18. End-to-End Flow Summary
 
 Here is how a typical message travels through the system:
 
 1. **signal_adapter.poll_messages()** receives a Signal message and yields a `Message` object.
 2. **main.py** awaits `runtime.handle_message(message)`.
-3. **AgentRuntime.handle_message()** persists the user message to SQLite, then checks:
+3. **AgentRuntime.handle_message()** checks first:
+   - Is it a transient command (TRANSIENT_COMMANDS, currently {"commands"})? → dispatch and return immediately, skip history persistence.
    - Is the message an approval word for a pending web search? → dispatch to CommandDispatcher with the stored @websearch query.
-   - Is the message @-prefixed or a plain digit? → dispatch to CommandDispatcher.
-   - Otherwise fall through to the LLM.
+   - Is the message @-prefixed or a plain digit? → dispatch to CommandDispatcher. Includes @podcast, @websearch, @magazine, @clear, @trackprice, and @cite.
+   - Otherwise fall through to the LLM, persisting the message to SQLite first.
 4. **LLM call** — context is built from system prompt + optional memory files + rolling conversation history. The LLM returns either a plain reply or tool calls.
 5. **Tool calls** — if the LLM returns `web_search`, a permission prompt is returned first. For all other tools, each is executed via ToolRegistry and results are appended as tool-role messages, then a second LLM call synthesizes the final reply.
 6. **Markdown stripping** — `_to_signal_formatting()` removes headers, bold/italic markers, code fences, and link syntax to keep replies clean in Signal.
 7. **Response** — the reply is persisted to SQLite and returned to main.py, which sends it via Signal.
+
+**@cite flow**: @cite commands go to `_handle_cite()` in CommandDispatcher. For all subcommands except `run`, the CLI is invoked synchronously (60s timeout) and the output is returned directly. For `@cite run`, a background task is fired with asyncio.create_task and an ack is returned immediately.
 
 In parallel, **TaskScheduler.run_forever()** polls SQLite every 2 seconds for due tasks and calls the same `handle_message` closure for each, so scheduled reminders follow the identical path.

@@ -1,5 +1,9 @@
 [
   {
+    "usage": "@cite <status|list|add <url>|run [id]|citations <id>>",
+    "description": "Manage citation tracking: discover, list, and add papers."
+  },
+  {
     "usage": "@podcast <type> [url]",
     "description": "Create a podcast from a URL or PDF attachment."
   },

@@ -19,6 +19,7 @@ from assistant.tools.podcast_tool import PODCAST_TYPES
 if TYPE_CHECKING:
     from assistant.db import Database
     from assistant.llm.base import LLMProvider
+    from assistant.tools.citation_tracker_tool import CitationTrackerTool
     from assistant.tools.ddg_search_tool import DdgSearchTool
     from assistant.tools.magazine_tool import MagazineTool
     from assistant.tools.podcast_tool import PodcastTool
@@ -65,6 +66,7 @@ class CommandDispatcher:
         db: Database | None = None,
         price_tracker_tool: PriceTrackerTool | None = None,
         magazine_tool: MagazineTool | None = None,
+        citation_tracker_tool: CitationTrackerTool | None = None,
     ) -> None:
         self._podcast_tool = podcast_tool
         self._kagi_search_tool = kagi_search_tool
@@ -74,6 +76,7 @@ class CommandDispatcher:
         self._db = db
         self._price_tracker_tool = price_tracker_tool
         self._magazine_tool = magazine_tool
+        self._citation_tracker_tool = citation_tracker_tool
         self._pending_epub: dict[str, str] = {}  # group_id -> epub
 
     async def dispatch(self, message: Message) -> str | None:
@@ -110,9 +113,35 @@ class CommandDispatcher:
             return await self._handle_trackprice(message)
         if command == "magazine":
             return await self._handle_magazine(args, message)
+        if command == "cite":
+            return await self._handle_cite(args)
         if command == "commands":
             return self._handle_commands()
         return None
+
+    async def _handle_cite(self, args: list[str]) -> str:
+        if self._citation_tracker_tool is None:
+            return "Citation tracker is not configured."
+        _USAGE = "Usage: @cite <status|list|add <url-or-doi>|run [id]|citations <id>>"
+        if not args:
+            return _USAGE
+        sub = args[0].lower()
+        if sub == "status":
+            return await self._citation_tracker_tool.status()
+        if sub == "list":
+            return await self._citation_tracker_tool.list_papers()
+        if sub == "add":
+            if len(args) < 2:
+                return "Usage: @cite add <url-or-doi>"
+            return await self._citation_tracker_tool.add_paper(args[1])
+        if sub == "run":
+            paper_id = args[1] if len(args) > 1 else None
+            return await self._citation_tracker_tool.run(paper_id)
+        if sub == "citations":
+            if len(args) < 2:
+                return "Usage: @cite citations <id>"
+            return await self._citation_tracker_tool.citations(args[1])
+        return f"Unknown subcommand '{sub}'. {_USAGE}"
 
     def _handle_commands(self) -> str:
         data_path = Path(__file__).parent / "commands_help.json"
