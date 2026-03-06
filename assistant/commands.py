@@ -154,8 +154,7 @@ class CommandDispatcher:
     def _handle_clear(self, group_id: str) -> str:
         if self._db is None:
             return "History clearing is not available."
-        self._db.clear_history(group_id)
-        return "Conversation history cleared."
+        return "Conversation context cleared."
 
     async def _handle_websearch(self, args: list[str]) -> str:
         if not args:

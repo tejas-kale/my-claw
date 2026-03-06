@@ -21,7 +21,7 @@
   },
   {
     "usage": "@clear",
-    "description": "Clear conversation history for this chat."
+    "description": "Clear conversation context for this chat (history is preserved in the database)."
   },
   {
     "usage": "@commands",

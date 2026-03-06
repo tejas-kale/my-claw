@@ -80,6 +80,11 @@ class AgentRuntime:
             if cmd_reply is not None:
                 cmd_reply = _to_signal_formatting(cmd_reply)
                 self._db.add_message(message.group_id, role="assistant", content=cmd_reply)
+                parsed = parse_command(message.text)
+                if parsed and parsed[0] == "clear":
+                    floor = self._db.get_latest_message_id(message.group_id)
+                    if floor is not None:
+                        self._db.set_context_floor(message.group_id, floor)
                 return cmd_reply
 
         await self._maybe_summarize(message.group_id)
@@ -160,8 +165,9 @@ class AgentRuntime:
         return reply
 
     def _build_context(self, group_id: str) -> list[dict[str, str]]:
-        summary = self._db.get_summary(group_id)
-        history = self._db.get_recent_messages(group_id, self._memory_window_messages)
+        floor_id = self._db.get_context_floor(group_id)
+        summary = None if floor_id else self._db.get_summary(group_id)
+        history = self._db.get_recent_messages(group_id, self._memory_window_messages, after_id=floor_id)
         system_content = (
             "You are a helpful personal AI assistant. Reply in plain text. "
             "Do not use headers or code blocks. "

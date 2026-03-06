@@ -505,29 +505,20 @@ class TestCommandDispatcherClear:
         assert "clear" in reply.lower() or "history" in reply.lower()
 
     @pytest.mark.asyncio
-    async def test_clear_wipes_messages(self, tmp_path):
+    async def test_clear_does_not_modify_db(self, tmp_path):
         db = Database(tmp_path / "assistant.db")
         db.initialize()
         db.upsert_group("group-1")
         db.add_message("group-1", "user", "hello")
         db.add_message("group-1", "assistant", "hi")
-
-        dispatcher = CommandDispatcher(db=db)
-        await dispatcher.dispatch(_msg("@clear"))
-
-        assert db.get_recent_messages("group-1", limit=10) == []
-
-    @pytest.mark.asyncio
-    async def test_clear_wipes_summary(self, tmp_path):
-        db = Database(tmp_path / "assistant.db")
-        db.initialize()
-        db.upsert_group("group-1")
         db.save_summary("group-1", "old summary")
 
         dispatcher = CommandDispatcher(db=db)
         await dispatcher.dispatch(_msg("@clear"))
 
-        assert db.get_summary("group-1") is None
+        # Messages and summary remain untouched in the database.
+        assert db.get_recent_messages("group-1", limit=10) != []
+        assert db.get_summary("group-1") == "old summary"
 
     @pytest.mark.asyncio
     async def test_clear_without_db_returns_error(self):
@@ -635,6 +626,34 @@ class TestAgentRuntimeCommandIntegration:
         reply = await runtime.handle_message(_msg("@podcast anything"))
         assert reply == "llm reply"
         assert len(llm.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_excludes_pre_clear_messages_from_context(self, tmp_path):
+        """After @clear, subsequent LLM context must not include pre-clear messages."""
+        db = Database(tmp_path / "assistant.db")
+        db.initialize()
+        llm = FakeLLM(reply="llm reply")
+        dispatcher = CommandDispatcher(db=db)
+        runtime = self._make_runtime(db, llm, dispatcher)
+
+        # Send a message before @clear.
+        await runtime.handle_message(_msg("message before clear"))
+        assert len(llm.calls) == 1
+        pre_clear_context = llm.calls[0]
+
+        # Issue @clear.
+        await runtime.handle_message(_msg("@clear"))
+
+        # Send a message after @clear.
+        await runtime.handle_message(_msg("message after clear"))
+        assert len(llm.calls) == 2
+        post_clear_context = llm.calls[1]
+
+        # The post-clear context must not contain the pre-clear user message.
+        all_content = " ".join(
+            m.get("content", "") for m in post_clear_context if isinstance(m.get("content"), str)
+        )
+        assert "message before clear" not in all_content
 
 
 # ===========================================================================

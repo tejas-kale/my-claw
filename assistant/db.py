@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -37,6 +37,9 @@ class Database:
             if row is None:
                 self._create_schema(conn)
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            elif row["version"] == 1:
+                conn.execute("ALTER TABLE groups ADD COLUMN context_floor_id INTEGER")
+                conn.execute("UPDATE schema_version SET version = 2")
             elif row["version"] != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Unsupported schema version {row['version']} (expected {SCHEMA_VERSION})"
@@ -49,7 +52,8 @@ class Database:
                 group_id TEXT PRIMARY KEY,
                 name TEXT,
                 metadata_json TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                context_floor_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS conversations (
@@ -124,18 +128,32 @@ class Database:
                 (group_id, role, sender_id, content, _utc_now_iso()),
             )
 
-    def get_recent_messages(self, group_id: str, limit: int) -> list[dict[str, str]]:
+    def get_recent_messages(
+        self, group_id: str, limit: int, after_id: int | None = None
+    ) -> list[dict[str, str]]:
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT role, content
-                FROM messages
-                WHERE group_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (group_id, limit),
-            ).fetchall()
+            if after_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT role, content
+                    FROM messages
+                    WHERE group_id = ? AND id > ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (group_id, after_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT role, content
+                    FROM messages
+                    WHERE group_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (group_id, limit),
+                ).fetchall()
         ordered = list(reversed(rows))
         return [{"role": row["role"], "content": row["content"]} for row in ordered]
 
@@ -168,6 +186,27 @@ class Database:
         with self._connect() as conn:
             conn.execute("DELETE FROM messages WHERE group_id = ?", (group_id,))
             conn.execute("DELETE FROM conversations WHERE group_id = ?", (group_id,))
+
+    def get_latest_message_id(self, group_id: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(id) AS max_id FROM messages WHERE group_id = ?", (group_id,)
+            ).fetchone()
+        return int(row["max_id"]) if row and row["max_id"] is not None else None
+
+    def set_context_floor(self, group_id: str, message_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE groups SET context_floor_id = ? WHERE group_id = ?",
+                (message_id, group_id),
+            )
+
+    def get_context_floor(self, group_id: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT context_floor_id FROM groups WHERE group_id = ?", (group_id,)
+            ).fetchone()
+        return int(row["context_floor_id"]) if row and row["context_floor_id"] is not None else None
 
     def log_tool_execution(
         self,
