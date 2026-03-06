@@ -501,7 +501,12 @@ class PodcastTool(Tool):
         paper_title = await _extract_paper_title(self._llm, source_url, attachment_path)
 
         # --- 6. Spawn background polling task ---
-        output_path = os.path.join(tempfile.gettempdir(), f"podcast_{notebook_id}.m4a")
+        if paper_title:
+            safe_title = re.sub(r'[^\w\s-]', '', paper_title).strip().replace(' ', '_')[:80]
+            output_filename = f"{safe_title}.m4a"
+        else:
+            output_filename = f"podcast_{notebook_id}.m4a"
+        output_path = os.path.join(tempfile.gettempdir(), output_filename)
         asyncio.create_task(
             _poll_and_send(
                 signal_adapter=self._signal_adapter,
