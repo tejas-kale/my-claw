@@ -1,20 +1,19 @@
 # my-claw
 
-A personal AI assistant that lives in your Signal inbox. Send it a message (or an image, PDF, or receipt) from your phone; it responds through an LLM via OpenRouter, calls tools, remembers things across conversations, searches the web, generates NotebookLM podcasts, and tracks grocery prices in BigQuery — all without leaving Signal.
+A personal AI assistant that lives in your Telegram inbox. Send it a message (or an image, PDF, or receipt) from your phone; it responds through an LLM via OpenRouter, calls tools, remembers things across conversations, searches the web, generates NotebookLM podcasts, and tracks grocery prices in BigQuery — all without leaving Telegram.
 
 ## Table of contents
 
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Signal setup (one-time)](#signal-setup-one-time)
+- [Telegram setup (one-time)](#telegram-setup-one-time)
 - [Configuration](#configuration)
 - [Running](#running)
 - [Features](#features)
   - [Conversation memory](#conversation-memory)
-  - [Notes and memory tools](#notes-and-memory-tools)
+  - [Notes](#notes)
   - [Web search](#web-search)
-  - [File and notes search](#file-and-notes-search)
   - [Task scheduler](#task-scheduler)
   - [Podcast generation](#podcast-generation)
   - [Grocery price tracker](#grocery-price-tracker)
@@ -28,10 +27,10 @@ A personal AI assistant that lives in your Signal inbox. Send it a message (or a
 ## Architecture
 
 ```
-Signal (phone)
-    │  signal-cli subprocess
+Telegram (phone)
+    │  Bot API long-polling (httpx)
     ▼
-SignalAdapter          ← polls receive, normalises Message objects, sends replies
+TelegramAdapter        ← polls getUpdates, normalises Message objects, sends replies
     │
     ├── CommandDispatcher  ← @-prefixed commands bypass the LLM entirely
     │       ├── @podcast      → PodcastTool (NotebookLM background task)
@@ -50,10 +49,6 @@ Tools available to the LLM (called autonomously, not via @commands):
     read_url          ← Jina Reader: fetches a URL and returns clean markdown
     write_note        ← save a short note to SQLite
     list_notes        ← read back saved notes from SQLite
-    save_note         ← append to markdown-file memory (daily log or topic note)
-    read_notes        ← read from markdown-file memory
-    ripgrep_search    ← regex search across project files or memory notes
-    fuzzy_filter      ← fzf approximate matching on a list of strings
     get_current_time  ← current UTC time
     create_podcast    ← start NotebookLM podcast generation (background task)
 ```
@@ -66,10 +61,6 @@ Tools available to the LLM (called autonomously, not via @commands):
 |---|---|---|
 | Python | 3.12+ | `brew install python@3.12` |
 | uv | any | `brew install uv` |
-| JDK | 25+ | `brew install openjdk@25` |
-| signal-cli | latest | `brew install signal-cli` |
-| ripgrep | any | `brew install ripgrep` (optional, for ripgrep search tool) |
-| fzf | any | `brew install fzf` (optional, for fuzzy filter tool) |
 | NotebookLM CLI | any | `uv tool install notebooklm-mcp-cli` (optional, for `@podcast`) |
 | Google Cloud SDK | any | `brew install google-cloud-sdk` (optional, for `@trackprice`) |
 
@@ -90,42 +81,29 @@ uv sync --extra dev
 
 ---
 
-## Signal setup (one-time)
+## Telegram setup (one-time)
 
-### 1. Register a phone number
+### 1. Create a bot
 
-my-claw needs its own Signal number. A spare SIM or a VoIP number (e.g. Google Voice) works fine.
+Message [@BotFather](https://t.me/BotFather) on Telegram:
 
-```bash
-# Get a captcha token by visiting:
-# https://signalcaptchas.org/registration/generate.html
-# Solve it, right-click "Open Signal", copy the URL — use the full URL as the captcha value.
-
-signal-cli -a +15555550123 register --captcha "signalcaptcha://..."
-signal-cli -a +15555550123 verify 123456      # SMS code sent to the number
+```
+/newbot
 ```
 
-### 2. Set a display name
+Follow the prompts to pick a name and username. BotFather will give you a **bot token** — save it as `TELEGRAM_BOT_TOKEN`.
 
-```bash
-signal-cli -a +15555550123 updateProfile --given-name "Claw" --family-name ""
-```
+### 2. Find your Telegram user ID
 
-### 3. Add yourself as a contact
+Message [@userinfobot](https://t.me/userinfobot) — it replies with your numeric user ID. Save it as `TELEGRAM_OWNER_ID`.
 
-Required for UUID-to-phone-number resolution when the assistant sends direct messages:
+### 3. Start a conversation with your bot
 
-```bash
-signal-cli -a +15555550123 addContact +19999999999
-```
+Open the bot's profile and tap **Start**. This is required before the bot can message you.
 
-### 4. Find your group ID (if using a group chat)
+### 4. Groups (optional)
 
-```bash
-signal-cli -a +15555550123 listGroups -d
-```
-
-Copy the Base64 group ID — you will use it to test with `signal-cli send` later.
+Add the bot to a group. Either disable Privacy Mode for the bot via BotFather (`/mybots → Bot Settings → Group Privacy → Turn off`), or make the bot an admin, so it can see all messages — not just commands.
 
 ---
 
@@ -151,11 +129,11 @@ OPENROUTER_API_KEY=sk-or-...
 #   google/gemini-2.0-flash-thinking-exp
 OPENROUTER_MODEL=anthropic/claude-3-5-sonnet
 
-# The Signal number registered to my-claw (E.164 format)
-SIGNAL_ACCOUNT=+15555550123
+# Telegram bot token from @BotFather
+TELEGRAM_BOT_TOKEN=123456789:AAF...
 
-# Your personal Signal number — always allowed to send commands
-SIGNAL_OWNER_NUMBER=+19999999999
+# Your Telegram user ID (from @userinfobot) — always allowed to send commands
+TELEGRAM_OWNER_ID=123456789
 
 # Your Kagi API key (https://kagi.com/settings?p=api) — required for web search
 KAGI_API_KEY=...
@@ -165,17 +143,14 @@ KAGI_API_KEY=...
 # OpenRouter base URL (change only if using a proxy)
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
-# Path to the signal-cli binary (default: signal-cli, assumed on PATH)
-SIGNAL_CLI_PATH=signal-cli
-
 # SQLite database file path
 DATABASE_PATH=assistant.db
 
-# Additional E.164 numbers allowed to send commands, comma-separated
-# SIGNAL_ALLOWED_SENDERS=+12125551234,+14155559876
+# Additional Telegram user IDs allowed to send commands, comma-separated
+# TELEGRAM_ALLOWED_SENDER_IDS=987654321,111222333
 
-# How often (seconds) to poll Signal for new messages
-SIGNAL_POLL_INTERVAL_SECONDS=2
+# Long-poll timeout in seconds (how long each getUpdates call blocks)
+TELEGRAM_POLL_TIMEOUT=30
 
 # Sliding context window — how many recent messages to include in the LLM context
 MEMORY_WINDOW_MESSAGES=20
@@ -185,9 +160,6 @@ MEMORY_SUMMARY_TRIGGER_MESSAGES=40
 
 # LLM call timeout in seconds
 REQUEST_TIMEOUT_SECONDS=30
-
-# Directory for markdown-file memory (daily notes + topic notes)
-# MY_CLAW_MEMORY=~/.my-claw/memory
 
 # Jina Reader API key for full-page fetches during @websearch (https://jina.ai/reader)
 # Leave blank for anonymous (rate-limited) access.
@@ -212,7 +184,7 @@ REQUEST_TIMEOUT_SECONDS=30
 uv run claw
 ```
 
-The assistant starts polling Signal every `SIGNAL_POLL_INTERVAL_SECONDS`. Send it a message from your phone to test.
+The assistant starts long-polling Telegram. Send it a message from your phone to test.
 
 To run in the background with logging to file:
 
@@ -228,50 +200,17 @@ nohup uv run claw >> ~/.my-claw/claw.log 2>&1 &
 
 my-claw maintains per-group (or per-DM) conversation history in SQLite. The last `MEMORY_WINDOW_MESSAGES` messages are included verbatim in every LLM context. When the buffer reaches `MEMORY_SUMMARY_TRIGGER_MESSAGES`, the older portion is automatically summarised by the LLM and stored as a rolling summary — keeping context bounded while preserving long-term continuity.
 
-The system prompt also injects:
-- the rolling conversation summary (if one exists)
-- the contents of `~/.my-claw/memory/summary.md` (your personal long-term memory file)
-- today's daily note file (if it exists)
-
-This means the LLM always has your persistent preferences and today's running log in context, without you having to ask.
-
 ---
 
-### Notes and memory tools
+### Notes
 
-The assistant has two note systems that complement each other.
-
-#### SQLite notes
-
-Quick, ephemeral per-group notes stored in the database. Good for session context:
+Quick per-group notes stored in SQLite. Good for session context:
 
 > "Remember that the dinner is on Friday"
 
 > "What did I ask you to remember about dinner?"
 
 The LLM calls `write_note` / `list_notes` automatically when you ask it to remember or recall things.
-
-#### Markdown file memory
-
-Durable notes written to `~/.my-claw/memory/` as plain markdown files. Two subtypes:
-
-**Daily log** — `daily/YYYY-MM-DD.md` — timestamped, append-only:
-
-> "Save a daily note: finished the API refactor, deploying tomorrow"
-
-Each entry is appended as `- [HH:MM] <content>`. Today's file is always injected into the LLM's system prompt.
-
-**Topic notes** — `topics/<slug>.md` — subject-specific, editable:
-
-> "Save a note about the project: we decided to use Postgres"
-
-> "Read my notes on the project"
-
-> "What topics do I have notes on?"
-
-If you ask for a topic that doesn't exist exactly, the tool fuzzy-matches on similar topic slugs before giving up. Topic files are plain markdown — you can edit them directly in any editor. Changes take effect immediately since they're read on every request.
-
-The top-level `~/.my-claw/memory/summary.md` file is a free-form permanent memory file; edit it by hand to capture things you always want the assistant to know.
 
 ---
 
@@ -319,34 +258,6 @@ Examples:
 
 ---
 
-### File and notes search
-
-Two tools are available for searching across files and notes, callable by the LLM or triggered conversationally.
-
-#### Ripgrep search
-
-Regex-powered full-text search using `rg`. Searches recursively within the project directory or your notes folder:
-
-> "Search my notes for mentions of postgres"
-
-> "Find all Python files that import httpx"
-
-> "Do I have any notes about budget?"
-
-The tool restricts searches to the project root and `~/.my-claw/memory` — the LLM cannot use it to read arbitrary filesystem paths.
-
-Supports: regex patterns, glob filters, file type filters, case-insensitive mode, context lines around matches.
-
-#### Fuzzy filter
-
-fzf-powered approximate matching on an explicit list of strings. Useful for typo-tolerant matching on note topic names, file names, or any list:
-
-> "Fuzzy match 'postgr' against my topic list"
-
-The LLM composes this with `read_notes` (topics_list) to locate the right topic even with approximate spelling.
-
----
-
 ### Task scheduler
 
 Schedule a future prompt to be injected back into the conversation at a specific time:
@@ -363,7 +274,7 @@ Scheduled tasks are stored in SQLite and survive restarts. The scheduler runs in
 
 ### Podcast generation
 
-Send a PDF as a Signal attachment (or a URL in the message body), along with an `@podcast` command, and my-claw will generate a NotebookLM deep-dive audio overview and send the `.m4a` back when ready.
+Send a PDF as a Telegram attachment (or a URL in the message body), along with an `@podcast` command, and my-claw will generate a NotebookLM deep-dive audio overview and send the `.m4a` back when ready.
 
 #### One-time setup
 
@@ -406,7 +317,7 @@ Focus prompts are in [`assistant/tools/podcast_tool.py`](assistant/tools/podcast
 3. Adds the PDF (or URL) as a source and waits for processing
 4. Starts a deep-dive audio generation with the type's focus prompt
 5. Polls generation status every 30 seconds (up to 60 minutes)
-6. Downloads the `.m4a` when ready and sends it to the Signal chat
+6. Downloads the `.m4a` when ready and sends it to the Telegram chat
 7. Deletes the notebook and temp file
 
 Generation typically takes 2–5 minutes. The assistant replies immediately with a confirmation and sends the audio file in a follow-up message when done.
@@ -556,7 +467,7 @@ tools.register(MyTool())
 
 `group_id` and `is_group` are auto-injected by the runtime — include them in `required` to receive them in `run()`.
 
-For tools that need to send messages back to Signal (e.g. from a background task), accept `signal_adapter: SignalAdapter` in `__init__` — see `PodcastTool` as the reference example.
+For tools that need to send messages back to Telegram (e.g. from a background task), accept a `signal_adapter` parameter in `__init__` — any object with a `send_message(chat_id, text, is_group, attachment_path)` coroutine works. See `PodcastTool` as the reference example.
 
 Command-only tools (not callable by the LLM) do not need to subclass `Tool`. See `PriceTrackerTool` as an example: it is instantiated directly and called by `CommandDispatcher._handle_trackprice()`.
 
@@ -570,19 +481,19 @@ uv run pytest tests/test_price_tracker_tool.py -v      # price tracker only
 uv run pytest tests/test_podcast_tool.py -v            # podcast tool only
 ```
 
-All external dependencies (BigQuery, LLM, signal-cli, fitz, nlm) are mocked in tests — no credentials or external services needed to run the suite.
+All external dependencies (BigQuery, LLM, Telegram API, fitz, nlm) are mocked in tests — no credentials or external services needed to run the suite.
 
 ---
 
 ## Troubleshooting
 
-**signal-cli fails to receive messages**
+**Bot doesn't receive messages in a group**
 
-Make sure the daemon is not already running from another process. signal-cli only allows one active session per account.
+Make sure Privacy Mode is disabled for the bot (via BotFather: `/mybots → Bot Settings → Group Privacy → Turn off`), or promote the bot to admin in the group.
 
-**`signal-cli send` exits with UUID error**
+**Bot receives stale messages after a restart**
 
-Run `signal-cli -a <account> addContact <your-number>` so signal-cli can resolve your number's UUID.
+On startup, my-claw drains old updates by calling `getUpdates?offset=-1` before entering the main loop. Messages that arrived while the process was down are intentionally discarded.
 
 **LLM calls time out**
 
