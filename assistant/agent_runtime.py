@@ -5,9 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
-from datetime import date
-from pathlib import Path
 
 from assistant.commands import TRANSIENT_COMMANDS, CommandDispatcher, parse_command
 from assistant.db import Database
@@ -31,7 +28,6 @@ class AgentRuntime:
         memory_window_messages: int,
         summary_trigger_messages: int,
         request_timeout_seconds: float,
-        memory_root: Path | None = None,
         command_dispatcher: CommandDispatcher | None = None,
     ) -> None:
         self._db = db
@@ -40,7 +36,6 @@ class AgentRuntime:
         self._memory_window_messages = memory_window_messages
         self._summary_trigger_messages = summary_trigger_messages
         self._request_timeout_seconds = request_timeout_seconds
-        self._memory_root = memory_root
         self._command_dispatcher = command_dispatcher
         self._pending_web_search: dict[str, str] = {}  # group_id -> query
 
@@ -52,7 +47,7 @@ class AgentRuntime:
             if parsed and parsed[0] in TRANSIENT_COMMANDS:
                 cmd_reply = await self._command_dispatcher.dispatch(message)
                 if cmd_reply is not None:
-                    return _to_signal_formatting(cmd_reply)
+                    return cmd_reply
 
         self._db.upsert_group(message.group_id)
         self._db.add_message(message.group_id, role="user", content=message.text, sender_id=message.sender_id)
@@ -69,7 +64,6 @@ class AgentRuntime:
                 )
                 cmd_reply = await self._command_dispatcher.dispatch(search_msg)
                 if cmd_reply is not None:
-                    cmd_reply = _to_signal_formatting(cmd_reply)
                     self._db.add_message(message.group_id, role="assistant", content=cmd_reply)
                     return cmd_reply
 
@@ -78,7 +72,6 @@ class AgentRuntime:
         ):
             cmd_reply = await self._command_dispatcher.dispatch(message)
             if cmd_reply is not None:
-                cmd_reply = _to_signal_formatting(cmd_reply)
                 self._db.add_message(message.group_id, role="assistant", content=cmd_reply)
                 parsed = parse_command(message.text)
                 if parsed and parsed[0] == "clear":
@@ -116,7 +109,7 @@ class AgentRuntime:
                 if queries:
                     self._pending_web_search[message.group_id] = queries[0]
                 query_lines = "\n".join(f"- {q}" for q in queries)
-                permission_reply = _to_signal_formatting(
+                permission_reply = (
                     f"I'd like to search the web to answer this. Proposed:\n\n"
                     f"{query_lines}\n\n"
                     f"Reply ok to proceed."
@@ -160,7 +153,6 @@ class AgentRuntime:
             LOGGER.warning("Model returned no tool calls (finish_reason=stop). Reply: %r", response.content[:200])
             reply = response.content
 
-        reply = _to_signal_formatting(reply)
         self._db.add_message(message.group_id, role="assistant", content=reply)
         return reply
 
@@ -169,8 +161,7 @@ class AgentRuntime:
         summary = None if floor_id else self._db.get_summary(group_id)
         history = self._db.get_recent_messages(group_id, self._memory_window_messages, after_id=floor_id)
         system_content = (
-            "You are a helpful personal AI assistant. Reply in plain text. "
-            "Do not use headers or code blocks. "
+            "You are a helpful personal AI assistant. "
             "CRITICAL: Never claim to have performed an action (created a podcast, saved a note, "
             "run a search, etc.) without actually calling the appropriate tool first. "
             "Every time the user asks you to do something that requires a tool, you MUST call "
@@ -181,13 +172,6 @@ class AgentRuntime:
         )
         if summary:
             system_content += f"\nConversation summary:\n{summary}"
-        if self._memory_root:
-            summary_path = self._memory_root / "summary.md"
-            if summary_path.exists():
-                system_content += f"\n\n## Your memory\n{summary_path.read_text()[:4000]}"
-            today_path = self._memory_root / "daily" / f"{date.today().isoformat()}.md"
-            if today_path.exists():
-                system_content += f"\n\n## Today's notes\n{today_path.read_text()[:2000]}"
         return [{"role": "system", "content": system_content}, *history]
 
     async def _maybe_summarize(self, group_id: str) -> None:
@@ -206,17 +190,3 @@ class AgentRuntime:
             self._llm.generate(prompt), timeout=self._request_timeout_seconds
         )
         self._db.save_summary(group_id, summary_response.content)
-
-
-def _to_signal_formatting(text: str) -> str:
-    # Bold/italic markers
-    text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text, flags=re.DOTALL)
-    text = re.sub(r"_{1,2}(.+?)_{1,2}", r"\1", text, flags=re.DOTALL)
-    # Headers
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    # Code blocks
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    text = re.sub(r"`(.+?)`", r"\1", text)
-    # Links: [text](url) → text
-    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
-    return text.strip()
