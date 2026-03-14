@@ -29,6 +29,7 @@ class AgentRuntime:
         summary_trigger_messages: int,
         request_timeout_seconds: float,
         command_dispatcher: CommandDispatcher | None = None,
+        location: str = "unknown",
     ) -> None:
         self._db = db
         self._llm = llm
@@ -37,6 +38,7 @@ class AgentRuntime:
         self._summary_trigger_messages = summary_trigger_messages
         self._request_timeout_seconds = request_timeout_seconds
         self._command_dispatcher = command_dispatcher
+        self._location = location
         self._pending_web_search: dict[str, str] = {}  # group_id -> query
 
     async def handle_message(self, message: Message) -> str:
@@ -157,11 +159,15 @@ class AgentRuntime:
         return reply
 
     def _build_context(self, group_id: str) -> list[dict[str, str]]:
+        from datetime import date
+
         floor_id = self._db.get_context_floor(group_id)
         summary = None if floor_id else self._db.get_summary(group_id)
         history = self._db.get_recent_messages(group_id, self._memory_window_messages, after_id=floor_id)
         system_content = (
             "You are a helpful personal AI assistant. "
+            f"Today's date is {date.today().isoformat()}. "
+            f"The user's location is {self._location}.\n"
             "CRITICAL: Never claim to have performed an action (created a podcast, saved a note, "
             "run a search, etc.) without actually calling the appropriate tool first. "
             "Every time the user asks you to do something that requires a tool, you MUST call "

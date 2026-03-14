@@ -30,6 +30,22 @@ logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
 
+async def _fetch_location() -> str:
+    """Return a city/region/country string from IP geolocation, or 'unknown'."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            data = (await client.get("https://ipinfo.io/json")).json()
+        city = data.get("city", "")
+        region = data.get("region", "")
+        country = data.get("country", "")
+        return ", ".join(part for part in (city, region, country) if part) or "unknown"
+    except Exception:
+        LOGGER.warning("Could not determine location; defaulting to unknown")
+        return "unknown"
+
+
 async def run() -> None:
     """Initialize app layers and start processing loop."""
 
@@ -81,6 +97,9 @@ async def run() -> None:
         citation_tracker_tool=CitationTrackerTool(),
     )
 
+    location = await _fetch_location()
+    LOGGER.info("Location: %s", location)
+
     runtime = AgentRuntime(
         db=db,
         llm=provider,
@@ -89,6 +108,7 @@ async def run() -> None:
         summary_trigger_messages=settings.memory_summary_trigger_messages,
         request_timeout_seconds=settings.request_timeout_seconds,
         command_dispatcher=command_dispatcher,
+        location=location,
     )
 
     async def handle_scheduled_prompt(group_id: str, prompt: str) -> None:
