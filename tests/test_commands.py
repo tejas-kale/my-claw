@@ -52,33 +52,33 @@ class TestParseCommand:
         assert parse_command("") is None
 
     def test_at_sign_alone_returns_none(self):
-        assert parse_command("@") is None
+        assert parse_command("/") is None
 
-    def test_at_sign_with_whitespace_only_returns_none(self):
-        assert parse_command("@   ") is None
+    def test_slash_with_whitespace_only_returns_none(self):
+        assert parse_command("/   ") is None
 
     def test_command_with_no_args(self):
-        assert parse_command("@podcast") == ("podcast", [])
+        assert parse_command("/podcast") == ("podcast", [])
 
     def test_command_with_one_arg(self):
-        assert parse_command("@podcast econpod") == ("podcast", ["econpod"])
+        assert parse_command("/podcast econpod") == ("podcast", ["econpod"])
 
     def test_command_with_url_arg(self):
-        result = parse_command("@podcast econpod https://example.com/paper.pdf")
+        result = parse_command("/podcast econpod https://example.com/paper.pdf")
         assert result == ("podcast", ["econpod", "https://example.com/paper.pdf"])
 
     def test_command_keyword_is_lowercased(self):
-        assert parse_command("@PODCAST econpod") == ("podcast", ["econpod"])
+        assert parse_command("/PODCAST econpod") == ("podcast", ["econpod"])
 
     def test_leading_trailing_whitespace_stripped(self):
-        assert parse_command("  @podcast econpod  ") == ("podcast", ["econpod"])
+        assert parse_command("  /podcast econpod  ") == ("podcast", ["econpod"])
 
     def test_unknown_command_is_parsed(self):
-        assert parse_command("@websearch kagi api") == ("websearch", ["kagi", "api"])
+        assert parse_command("/websearch kagi api") == ("websearch", ["kagi", "api"])
 
     def test_args_case_preserved(self):
         # args are NOT lowercased — only the command keyword is
-        cmd, args = parse_command("@podcast EconPod")  # type: ignore[misc]
+        cmd, args = parse_command("/podcast EconPod")  # type: ignore[misc]
         assert args == ["EconPod"]
 
 
@@ -96,12 +96,12 @@ class TestCommandDispatcherRouting:
     @pytest.mark.asyncio
     async def test_unknown_at_command_returns_none(self):
         dispatcher = CommandDispatcher()
-        assert await dispatcher.dispatch(_msg("@foobar something")) is None
+        assert await dispatcher.dispatch(_msg("/foobar something")) is None
 
     @pytest.mark.asyncio
     async def test_at_sign_alone_returns_none(self):
         dispatcher = CommandDispatcher()
-        assert await dispatcher.dispatch(_msg("@")) is None
+        assert await dispatcher.dispatch(_msg("/")) is None
 
 
 # ===========================================================================
@@ -113,21 +113,21 @@ class TestCommandDispatcherPodcast:
     @pytest.mark.asyncio
     async def test_missing_podcast_type_returns_usage(self):
         dispatcher = CommandDispatcher(podcast_tool=_podcast_tool({}))
-        result = await dispatcher.dispatch(_msg("@podcast"))
+        result = await dispatcher.dispatch(_msg("/podcast"))
         assert result is not None
         assert "usage" in result.lower() or "valid types" in result.lower()
 
     @pytest.mark.asyncio
     async def test_invalid_podcast_type_returns_error(self):
         dispatcher = CommandDispatcher(podcast_tool=_podcast_tool({}))
-        result = await dispatcher.dispatch(_msg("@podcast nosuchtype"))
+        result = await dispatcher.dispatch(_msg("/podcast nosuchtype"))
         assert result is not None
         assert "nosuchtype" in result
 
     @pytest.mark.asyncio
     async def test_valid_type_with_no_source_returns_error(self):
         dispatcher = CommandDispatcher(podcast_tool=_podcast_tool({}))
-        result = await dispatcher.dispatch(_msg("@podcast econpod"))
+        result = await dispatcher.dispatch(_msg("/podcast econpod"))
         assert result is not None
         assert "pdf" in result.lower() or "url" in result.lower() or "attach" in result.lower()
 
@@ -135,7 +135,7 @@ class TestCommandDispatcherPodcast:
     async def test_tool_not_configured_returns_error(self):
         dispatcher = CommandDispatcher(podcast_tool=None)
         result = await dispatcher.dispatch(
-            _msg("@podcast econpod https://example.com/paper.pdf")
+            _msg("/podcast econpod https://example.com/paper.pdf")
         )
         assert result is not None
         assert "not configured" in result.lower()
@@ -145,7 +145,7 @@ class TestCommandDispatcherPodcast:
         tool = _podcast_tool({"error": "nlm not found on PATH"})
         dispatcher = CommandDispatcher(podcast_tool=tool)
         result = await dispatcher.dispatch(
-            _msg("@podcast econpod https://example.com/paper.pdf")
+            _msg("/podcast econpod https://example.com/paper.pdf")
         )
         assert result is not None
         assert "nlm not found on PATH" in result
@@ -155,7 +155,7 @@ class TestCommandDispatcherPodcast:
         tool = _podcast_tool({"message": "Podcast generation started."})
         dispatcher = CommandDispatcher(podcast_tool=tool)
         result = await dispatcher.dispatch(
-            _msg("@podcast econpod https://example.com/paper.pdf")
+            _msg("/podcast econpod https://example.com/paper.pdf")
         )
         assert result == "Podcast generation started."
         kw = tool.run.call_args.kwargs
@@ -170,7 +170,7 @@ class TestCommandDispatcherPodcast:
         dispatcher = CommandDispatcher(podcast_tool=tool)
         result = await dispatcher.dispatch(
             _msg(
-                "@podcast cspod",
+                "/podcast cspod",
                 attachments=[{"local_path": "/tmp/paper.pdf", "content_type": "application/pdf"}],
             )
         )
@@ -187,7 +187,7 @@ class TestCommandDispatcherPodcast:
         dispatcher = CommandDispatcher(podcast_tool=tool)
         await dispatcher.dispatch(
             _msg(
-                "@podcast econpod https://example.com/paper.pdf",
+                "/podcast econpod https://example.com/paper.pdf",
                 attachments=[{"local_path": "/tmp/other.pdf", "content_type": "application/pdf"}],
             )
         )
@@ -203,7 +203,7 @@ class TestCommandDispatcherPodcast:
             tool = _podcast_tool({"message": "ok"})
             dispatcher = CommandDispatcher(podcast_tool=tool)
             result = await dispatcher.dispatch(
-                _msg(f"@podcast {podcast_type} https://example.com/p.pdf")
+                _msg(f"/podcast {podcast_type} https://example.com/p.pdf")
             )
             assert result == "ok", f"Expected success for type {podcast_type!r}, got {result!r}"
 
@@ -244,21 +244,21 @@ class TestCommandDispatcherWebsearch:
     @pytest.mark.asyncio
     async def test_websearch_kagi_no_tool_returns_error(self):
         dispatcher = CommandDispatcher()
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert result is not None
         assert "not configured" in result.lower()
 
     @pytest.mark.asyncio
     async def test_websearch_ddg_no_tool_returns_error(self):
         dispatcher = CommandDispatcher()
-        result = await dispatcher.dispatch(_msg("@websearch ddg something"))
+        result = await dispatcher.dispatch(_msg("/websearch ddg something"))
         assert result is not None
         assert "not configured" in result.lower()
 
     @pytest.mark.asyncio
     async def test_websearch_no_args_returns_usage(self):
         dispatcher = CommandDispatcher()
-        result = await dispatcher.dispatch(_msg("@websearch"))
+        result = await dispatcher.dispatch(_msg("/websearch"))
         assert result is not None
         assert "usage" in result.lower()
 
@@ -266,7 +266,7 @@ class TestCommandDispatcherWebsearch:
     async def test_websearch_ddg_missing_query_returns_usage(self):
         tool = _search_tool("should not be called")
         dispatcher = CommandDispatcher(ddg_search_tool=tool)
-        result = await dispatcher.dispatch(_msg("@websearch ddg"))
+        result = await dispatcher.dispatch(_msg("/websearch ddg"))
         assert result is not None
         assert "usage" in result.lower()
         tool.run.assert_not_called()
@@ -275,7 +275,7 @@ class TestCommandDispatcherWebsearch:
     async def test_websearch_no_llm_returns_raw_results(self):
         tool = _search_tool("raw results text")
         dispatcher = CommandDispatcher(kagi_search_tool=tool)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert result == "raw results text"
 
     # --- Sub-query generation ---
@@ -285,7 +285,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["elim chamber 2026"], [])
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch elimination chamber 2026"))
+        await dispatcher.dispatch(_msg("/websearch elimination chamber 2026"))
         first_call_msgs = llm.generate.call_args_list[0][0][0]
         user_msg = next(m["content"] for m in first_call_msgs if m["role"] == "user")
         assert "elimination chamber 2026" in user_msg
@@ -295,7 +295,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["query one", "query two"], [])
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         assert search.run.call_count == 2
         called = {c.kwargs["query"] for c in search.run.call_args_list}
         assert called == {"query one", "query two"}
@@ -314,7 +314,7 @@ class TestCommandDispatcherWebsearch:
         )
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch original query"))
+        await dispatcher.dispatch(_msg("/websearch original query"))
         search.run.assert_called_once_with(query="original query")
 
     @pytest.mark.asyncio
@@ -322,7 +322,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["generated sub-query"], [])
         tool = _search_tool("raw ddg results")
         dispatcher = CommandDispatcher(ddg_search_tool=tool, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch ddg elimination chamber"))
+        await dispatcher.dispatch(_msg("/websearch ddg elimination chamber"))
         first_call_msgs = llm.generate.call_args_list[0][0][0]
         user_msg = next(m["content"] for m in first_call_msgs if m["role"] == "user")
         assert "elimination chamber" in user_msg
@@ -335,7 +335,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["q"], ["https://best.com", "https://second.com"])
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         second_call_msgs = llm.generate.call_args_list[1][0][0]
         user_msg = next(m["content"] for m in second_call_msgs if m["role"] == "user")
         assert "something" in user_msg
@@ -348,7 +348,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("page content")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         called_urls = [c.kwargs["url"] for c in read_url.run.call_args_list]
         assert "https://ranked-1.com" in called_urls
         assert "https://ranked-2.com" in called_urls
@@ -360,7 +360,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("page content")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         assert read_url.run.call_count == 2
 
     @pytest.mark.asyncio
@@ -377,7 +377,7 @@ class TestCommandDispatcherWebsearch:
             ]
         )
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         assert read_url.run.call_count == 3
 
     @pytest.mark.asyncio
@@ -386,7 +386,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("JINA PAGE CONTENT")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         synthesis_msgs = llm.generate.call_args_list[2][0][0]
         user_msg = next(m["content"] for m in synthesis_msgs if m["role"] == "user")
         assert "JINA PAGE CONTENT" in user_msg
@@ -396,7 +396,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["q"], ["https://example.com"], "answer without jina")
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert "answer without jina" in result
 
     @pytest.mark.asyncio
@@ -414,7 +414,7 @@ class TestCommandDispatcherWebsearch:
             ]
         )
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert "final answer" in result
         assert read_url.run.call_count == 2
 
@@ -424,7 +424,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("should not be called")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        await dispatcher.dispatch(_msg("@websearch something"))
+        await dispatcher.dispatch(_msg("/websearch something"))
         read_url.run.assert_not_called()
 
     # --- Final synthesis ---
@@ -434,7 +434,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["q"], [], "THE FINAL ANSWER")
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert result == "THE FINAL ANSWER"
 
     # --- References section ---
@@ -445,7 +445,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("page content")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert "the answer" in result
         assert "References" in result
         assert "https://cited.com" in result
@@ -458,7 +458,7 @@ class TestCommandDispatcherWebsearch:
         search = _search_tool("raw results")
         read_url = _search_tool("Failed to read URL (HTTP 403): https://ranked-1.com")
         dispatcher = CommandDispatcher(kagi_search_tool=search, read_url_tool=read_url, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert "References" in result
         assert "https://ranked-1.com" in result
 
@@ -467,7 +467,7 @@ class TestCommandDispatcherWebsearch:
         llm = _llm_search(["q"], [], "the answer")
         search = _search_tool("raw results")
         dispatcher = CommandDispatcher(kagi_search_tool=search, llm=llm)
-        result = await dispatcher.dispatch(_msg("@websearch something"))
+        result = await dispatcher.dispatch(_msg("/websearch something"))
         assert result == "the answer"
         assert "References" not in result
 
@@ -500,7 +500,7 @@ class TestCommandDispatcherClear:
         db = Database(tmp_path / "assistant.db")
         db.initialize()
         dispatcher = CommandDispatcher(db=db)
-        reply = await dispatcher.dispatch(_msg("@clear"))
+        reply = await dispatcher.dispatch(_msg("/clear"))
         assert reply is not None
         assert "clear" in reply.lower() or "history" in reply.lower()
 
@@ -514,7 +514,7 @@ class TestCommandDispatcherClear:
         db.save_summary("group-1", "old summary")
 
         dispatcher = CommandDispatcher(db=db)
-        await dispatcher.dispatch(_msg("@clear"))
+        await dispatcher.dispatch(_msg("/clear"))
 
         # Messages and summary remain untouched in the database.
         assert db.get_recent_messages("group-1", limit=10) != []
@@ -523,7 +523,7 @@ class TestCommandDispatcherClear:
     @pytest.mark.asyncio
     async def test_clear_without_db_returns_error(self):
         dispatcher = CommandDispatcher()
-        reply = await dispatcher.dispatch(_msg("@clear"))
+        reply = await dispatcher.dispatch(_msg("/clear"))
         assert reply is not None
         assert "not available" in reply.lower()
 
@@ -555,7 +555,7 @@ class TestAgentRuntimeCommandIntegration:
         runtime = self._make_runtime(db, llm, dispatcher)
 
         reply = await runtime.handle_message(
-            _msg("@podcast econpod https://example.com/p.pdf")
+            _msg("/podcast econpod https://example.com/p.pdf")
         )
 
         assert reply == "Podcast started."
@@ -571,7 +571,7 @@ class TestAgentRuntimeCommandIntegration:
         dispatcher = CommandDispatcher(podcast_tool=tool)
         runtime = self._make_runtime(db, llm, dispatcher)
 
-        await runtime.handle_message(_msg("@podcast econpod https://example.com/p.pdf"))
+        await runtime.handle_message(_msg("/podcast econpod https://example.com/p.pdf"))
 
         history = db.get_recent_messages("group-1", limit=10)
         roles = [m["role"] for m in history]
@@ -586,7 +586,7 @@ class TestAgentRuntimeCommandIntegration:
         dispatcher = CommandDispatcher()  # no tools wired → unknown command
         runtime = self._make_runtime(db, llm, dispatcher)
 
-        reply = await runtime.handle_message(_msg("@foobar some query"))
+        reply = await runtime.handle_message(_msg("/foobar some query"))
 
         assert reply == "llm reply"
         assert len(llm.calls) == 1, "LLM must be called for unknown @commands"
@@ -623,7 +623,7 @@ class TestAgentRuntimeCommandIntegration:
             request_timeout_seconds=5,
         )
 
-        reply = await runtime.handle_message(_msg("@podcast anything"))
+        reply = await runtime.handle_message(_msg("/podcast anything"))
         assert reply == "llm reply"
         assert len(llm.calls) == 1
 
@@ -642,7 +642,7 @@ class TestAgentRuntimeCommandIntegration:
         pre_clear_context = llm.calls[0]
 
         # Issue @clear.
-        await runtime.handle_message(_msg("@clear"))
+        await runtime.handle_message(_msg("/clear"))
 
         # Send a message after @clear.
         await runtime.handle_message(_msg("message after clear"))
@@ -672,14 +672,14 @@ class TestCommandDispatcherMagazine:
     @pytest.mark.asyncio
     async def test_magazine_no_args_returns_usage(self):
         dispatcher = CommandDispatcher(magazine_tool=_magazine_tool())
-        result = await dispatcher.dispatch(_msg("@magazine"))
+        result = await dispatcher.dispatch(_msg("/magazine"))
         assert result is not None
         assert "usage" in result.lower()
 
     @pytest.mark.asyncio
     async def test_magazine_tool_not_configured_returns_error(self):
         dispatcher = CommandDispatcher(magazine_tool=None)
-        result = await dispatcher.dispatch(_msg("@magazine blizzard"))
+        result = await dispatcher.dispatch(_msg("/magazine blizzard"))
         assert result is not None
         assert "not configured" in result.lower()
 
@@ -687,17 +687,17 @@ class TestCommandDispatcherMagazine:
     async def test_magazine_single_word_epub_lists_chapters(self):
         tool = _magazine_tool(list_result="1  Intro\n2  Chapter Two")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        result = await dispatcher.dispatch(_msg("@magazine blizzard"))
+        result = await dispatcher.dispatch(_msg("/magazine blizzard"))
         assert "1  Intro\n2  Chapter Two" in result
         tool.list_chapters.assert_awaited_once_with("blizzard")
         tool.start_generation.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_magazine_multi_word_epub_lists_chapters(self):
-        """'@magazine The Blizzard' — no chapter number, should list chapters."""
+        """'/magazine The Blizzard' — no chapter number, should list chapters."""
         tool = _magazine_tool(list_result="chapters here")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        result = await dispatcher.dispatch(_msg("@magazine The Blizzard"))
+        result = await dispatcher.dispatch(_msg("/magazine The Blizzard"))
         assert "chapters here" in result
         tool.list_chapters.assert_awaited_once_with("The Blizzard")
         tool.start_generation.assert_not_called()
@@ -706,7 +706,7 @@ class TestCommandDispatcherMagazine:
     async def test_magazine_single_word_epub_with_chapter_number_starts_generation(self):
         tool = _magazine_tool(gen_result="Generating...")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        result = await dispatcher.dispatch(_msg("@magazine blizzard 3"))
+        result = await dispatcher.dispatch(_msg("/magazine blizzard 3"))
         assert result == "Generating..."
         tool.start_generation.assert_awaited_once()
         kw = tool.start_generation.call_args.kwargs
@@ -715,10 +715,10 @@ class TestCommandDispatcherMagazine:
 
     @pytest.mark.asyncio
     async def test_magazine_multi_word_epub_with_chapter_number_starts_generation(self):
-        """'@magazine The Blizzard 3' — numeric last arg is the chapter."""
+        """'/magazine The Blizzard 3' — numeric last arg is the chapter."""
         tool = _magazine_tool(gen_result="Generating...")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        result = await dispatcher.dispatch(_msg("@magazine The Blizzard 3"))
+        result = await dispatcher.dispatch(_msg("/magazine The Blizzard 3"))
         assert result == "Generating..."
         tool.start_generation.assert_awaited_once()
         kw = tool.start_generation.call_args.kwargs
@@ -727,17 +727,17 @@ class TestCommandDispatcherMagazine:
 
     @pytest.mark.asyncio
     async def test_magazine_non_numeric_last_arg_treated_as_epub_name(self):
-        """'@magazine The Blizzard Issue' — no digit, entire string is epub."""
+        """'/magazine The Blizzard Issue' — no digit, entire string is epub."""
         tool = _magazine_tool(list_result="chapters")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        await dispatcher.dispatch(_msg("@magazine The Blizzard Issue"))
+        await dispatcher.dispatch(_msg("/magazine The Blizzard Issue"))
         tool.list_chapters.assert_awaited_once_with("The Blizzard Issue")
 
     @pytest.mark.asyncio
     async def test_magazine_passes_group_id_to_start_generation(self):
         tool = _magazine_tool()
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        await dispatcher.dispatch(_msg("@magazine blizzard 5"))
+        await dispatcher.dispatch(_msg("/magazine blizzard 5"))
         kw = tool.start_generation.call_args.kwargs
         assert kw["group_id"] == "group-1"
 
@@ -746,7 +746,7 @@ class TestCommandDispatcherMagazine:
         """After listing chapters, a plain digit triggers generation."""
         tool = _magazine_tool(list_result="1  Intro\n2  Blizzard")
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        await dispatcher.dispatch(_msg("@magazine blizzard"))
+        await dispatcher.dispatch(_msg("/magazine blizzard"))
         result = await dispatcher.dispatch(_msg("9"))
         assert result == "Generating..."
         kw = tool.start_generation.call_args.kwargs
@@ -758,7 +758,7 @@ class TestCommandDispatcherMagazine:
         """Pending epub is consumed after one chapter selection."""
         tool = _magazine_tool()
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        await dispatcher.dispatch(_msg("@magazine blizzard"))
+        await dispatcher.dispatch(_msg("/magazine blizzard"))
         await dispatcher.dispatch(_msg("3"))
         # Second digit should NOT trigger magazine — no pending epub left.
         result = await dispatcher.dispatch(_msg("5"))
@@ -777,7 +777,7 @@ class TestCommandDispatcherMagazine:
         """Pending epub state is scoped to the group that listed chapters."""
         tool = _magazine_tool()
         dispatcher = CommandDispatcher(magazine_tool=tool)
-        await dispatcher.dispatch(_msg("@magazine blizzard"))  # group-1
+        await dispatcher.dispatch(_msg("/magazine blizzard"))  # group-1
         # A digit from a different group should not trigger generation.
         other_msg = Message(
             group_id="group-2",
@@ -798,17 +798,17 @@ class TestCommandDispatcherCommands:
     @pytest.mark.asyncio
     async def test_commands_returns_help_text(self):
         dispatcher = CommandDispatcher()
-        result = await dispatcher.dispatch(_msg("@commands"))
+        result = await dispatcher.dispatch(_msg("/commands"))
         assert result is not None
-        for name in ("@podcast", "@websearch", "@magazine", "@trackprice", "@clear", "@commands"):
+        for name in ("/podcast", "/websearch", "/magazine", "/trackprice", "/clear", "/commands"):
             assert name in result
 
     @pytest.mark.asyncio
     async def test_commands_includes_cite(self):
         dispatcher = CommandDispatcher()
-        result = await dispatcher.dispatch(_msg("@commands"))
+        result = await dispatcher.dispatch(_msg("/commands"))
         assert result is not None
-        assert "@cite" in result
+        assert "/cite" in result
 
     @pytest.mark.asyncio
     async def test_commands_not_saved_to_history(self, tmp_path):
@@ -831,7 +831,7 @@ class TestCommandDispatcherCommands:
         )
 
         with patch.object(db, "add_message") as mock_add:
-            await runtime.handle_message(_msg("@commands"))
+            await runtime.handle_message(_msg("/commands"))
             mock_add.assert_not_called()
 
 
@@ -854,14 +854,14 @@ class TestCommandDispatcherCite:
     @pytest.mark.asyncio
     async def test_cite_no_args_returns_usage(self):
         dispatcher = CommandDispatcher(citation_tracker_tool=_cite_tool())
-        result = await dispatcher.dispatch(_msg("@cite"))
+        result = await dispatcher.dispatch(_msg("/cite"))
         assert result is not None
         assert "usage" in result.lower()
 
     @pytest.mark.asyncio
     async def test_cite_tool_not_configured_returns_error(self):
         dispatcher = CommandDispatcher(citation_tracker_tool=None)
-        result = await dispatcher.dispatch(_msg("@cite status"))
+        result = await dispatcher.dispatch(_msg("/cite status"))
         assert result is not None
         assert "not configured" in result.lower()
 
@@ -869,7 +869,7 @@ class TestCommandDispatcherCite:
     async def test_cite_status_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite status"))
+        result = await dispatcher.dispatch(_msg("/cite status"))
         assert result == "status output"
         tool.status.assert_awaited_once()
 
@@ -877,7 +877,7 @@ class TestCommandDispatcherCite:
     async def test_cite_list_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite list"))
+        result = await dispatcher.dispatch(_msg("/cite list"))
         assert result == "paper list"
         tool.list_papers.assert_awaited_once()
 
@@ -885,7 +885,7 @@ class TestCommandDispatcherCite:
     async def test_cite_add_with_url_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite add https://example.com/paper"))
+        result = await dispatcher.dispatch(_msg("/cite add https://example.com/paper"))
         assert result == "Paper added."
         tool.add_paper.assert_awaited_once_with("https://example.com/paper")
 
@@ -893,7 +893,7 @@ class TestCommandDispatcherCite:
     async def test_cite_add_missing_arg_returns_usage(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite add"))
+        result = await dispatcher.dispatch(_msg("/cite add"))
         assert result is not None
         assert "usage" in result.lower()
         tool.add_paper.assert_not_called()
@@ -902,7 +902,7 @@ class TestCommandDispatcherCite:
     async def test_cite_run_no_id_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite run"))
+        result = await dispatcher.dispatch(_msg("/cite run"))
         assert result is not None
         assert "citation discovery started" in result.lower()
         tool.run.assert_awaited_once_with(None)
@@ -911,14 +911,14 @@ class TestCommandDispatcherCite:
     async def test_cite_run_with_id_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        await dispatcher.dispatch(_msg("@cite run abc123"))
+        await dispatcher.dispatch(_msg("/cite run abc123"))
         tool.run.assert_awaited_once_with("abc123")
 
     @pytest.mark.asyncio
     async def test_cite_citations_calls_tool(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite citations abc123"))
+        result = await dispatcher.dispatch(_msg("/cite citations abc123"))
         assert result == "citations output"
         tool.citations.assert_awaited_once_with("abc123")
 
@@ -926,7 +926,7 @@ class TestCommandDispatcherCite:
     async def test_cite_citations_missing_id_returns_usage(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite citations"))
+        result = await dispatcher.dispatch(_msg("/cite citations"))
         assert result is not None
         assert "usage" in result.lower()
         tool.citations.assert_not_called()
@@ -935,7 +935,7 @@ class TestCommandDispatcherCite:
     async def test_cite_unknown_subcommand_returns_error(self):
         tool = _cite_tool()
         dispatcher = CommandDispatcher(citation_tracker_tool=tool)
-        result = await dispatcher.dispatch(_msg("@cite foobar"))
+        result = await dispatcher.dispatch(_msg("/cite foobar"))
         assert result is not None
         assert "foobar" in result
         assert "unknown" in result.lower()

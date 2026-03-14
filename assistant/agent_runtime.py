@@ -42,7 +42,7 @@ class AgentRuntime:
     async def handle_message(self, message: Message) -> str:
         """Handle one inbound user message and return assistant reply."""
 
-        if self._command_dispatcher and message.text.startswith("@"):
+        if self._command_dispatcher and message.text.startswith("/"):
             parsed = parse_command(message.text)
             if parsed and parsed[0] in TRANSIENT_COMMANDS:
                 cmd_reply = await self._command_dispatcher.dispatch(message)
@@ -58,7 +58,7 @@ class AgentRuntime:
                 search_msg = Message(
                     group_id=message.group_id,
                     sender_id=message.sender_id,
-                    text=f"@websearch {pending_query}",
+                    text=f"/websearch {pending_query}",
                     timestamp=message.timestamp,
                     is_group=message.is_group,
                 )
@@ -68,7 +68,7 @@ class AgentRuntime:
                     return cmd_reply
 
         if self._command_dispatcher and (
-            message.text.startswith("@") or message.text.strip().isdigit()
+            message.text.startswith("/") or message.text.strip().isdigit()
         ):
             cmd_reply = await self._command_dispatcher.dispatch(message)
             if cmd_reply is not None:

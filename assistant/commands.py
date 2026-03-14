@@ -1,7 +1,7 @@
-"""Command dispatcher for @-prefixed messages.
+"""Command dispatcher for /-prefixed messages.
 
 Commands bypass the LLM and invoke tools directly.
-An unrecognised @command returns None, letting it fall through to the LLM.
+An unrecognised /command returns None, letting it fall through to the LLM.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
-_PODCAST_USAGE = f"Usage: @podcast <type> [url]\nValid types: {', '.join(PODCAST_TYPES)}"
+_PODCAST_USAGE = f"Usage: /podcast <type> [url]\nValid types: {', '.join(PODCAST_TYPES)}"
 
 TRANSIENT_COMMANDS: frozenset[str] = frozenset({"commands"})
 
@@ -42,7 +42,7 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
         is not a valid @command.
     """
     text = text.strip()
-    if not text.startswith("@"):
+    if not text.startswith("/"):
         return None
     parts = text[1:].split()
     if not parts:
@@ -51,7 +51,7 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
 
 
 class CommandDispatcher:
-    """Routes @-prefixed messages to tool handlers, bypassing the LLM.
+    """Routes /-prefixed messages to tool handlers, bypassing the LLM.
 
     Returns None for unrecognised commands so the caller can fall through.
     """
@@ -122,7 +122,7 @@ class CommandDispatcher:
     async def _handle_cite(self, args: list[str]) -> str:
         if self._citation_tracker_tool is None:
             return "Citation tracker is not configured."
-        _USAGE = "Usage: @cite <status|list|add <url-or-doi>|run [id]|citations <id>>"
+        _USAGE = "Usage: /cite <status|list|add <url-or-doi>|run [id]|citations <id>>"
         if not args:
             return _USAGE
         sub = args[0].lower()
@@ -158,7 +158,7 @@ class CommandDispatcher:
 
     async def _handle_websearch(self, args: list[str]) -> str:
         if not args:
-            return "Usage: @websearch [ddg] <query>"
+            return "Usage: /websearch [ddg] <query>"
 
         if args[0].lower() == "ddg":
             tool = self._ddg_search_tool
@@ -170,7 +170,7 @@ class CommandDispatcher:
             provider = "Kagi"
 
         if not query:
-            return "Usage: @websearch [ddg] <query>"
+            return "Usage: /websearch [ddg] <query>"
         if tool is None:
             return f"{provider} search is not configured."
 
@@ -306,11 +306,11 @@ class CommandDispatcher:
         if self._magazine_tool is None:
             return "Magazine tool is not configured."
         if not args:
-            return "Usage: @magazine <epub> [chapter-number]"
+            return "Usage: /magazine <epub> [chapter-number]"
 
         # If the last arg is a chapter number, split it off; otherwise all args
         # form the epub name/ID. This lets multi-word source names work correctly
-        # (e.g. "@magazine The Blizzard" or "@magazine The Blizzard 3").
+        # (e.g. "/magazine The Blizzard" or "/magazine The Blizzard 3").
         if len(args) > 1 and args[-1].isdigit():
             epub = " ".join(args[:-1])
             chapter = args[-1]

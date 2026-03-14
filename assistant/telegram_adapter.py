@@ -217,6 +217,12 @@ class TelegramAdapter:
                     f"{self._base_url}/sendMessage",
                     json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
                 )
+                if resp.status_code == 400:
+                    LOGGER.warning("Markdown parse failed; retrying as plain text")
+                    resp = await client.post(
+                        f"{self._base_url}/sendMessage",
+                        json={"chat_id": chat_id, "text": text},
+                    )
 
             if resp.status_code != 200:
                 LOGGER.warning("Telegram send failed (%d): %s", resp.status_code, resp.text)

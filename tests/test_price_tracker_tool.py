@@ -1,4 +1,4 @@
-"""Tests for the price tracker tool and @trackprice command dispatcher handler."""
+"""Tests for the price tracker tool and /trackprice command dispatcher handler."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _make_tool(llm: AsyncMock | None = None) -> PriceTrackerTool:
     )
 
 
-def _make_message(text: str = "@trackprice", attachments: list | None = None) -> Message:
+def _make_message(text: str = "/trackprice", attachments: list | None = None) -> Message:
     return Message(
         group_id="g1",
         sender_id="s1",
@@ -57,14 +57,14 @@ def _make_message(text: str = "@trackprice", attachments: list | None = None) ->
 
 
 # ---------------------------------------------------------------------------
-# CommandDispatcher: @trackprice handler
+# CommandDispatcher: /trackprice handler
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_run_no_attachment_returns_error() -> None:
     dispatcher = CommandDispatcher()
-    msg = _make_message(text="@trackprice", attachments=[])
+    msg = _make_message(text="/trackprice", attachments=[])
     result = await dispatcher.dispatch(msg)
     assert result is not None
     assert "attach" in result.lower()
@@ -74,7 +74,7 @@ async def test_run_no_attachment_returns_error() -> None:
 async def test_run_tool_not_configured_returns_error() -> None:
     dispatcher = CommandDispatcher(price_tracker_tool=None)
     msg = _make_message(
-        text="@trackprice",
+        text="/trackprice",
         attachments=[{"local_path": "/tmp/r.jpg", "content_type": "image/jpeg"}],
     )
     result = await dispatcher.dispatch(msg)

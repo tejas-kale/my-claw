@@ -32,11 +32,11 @@ Telegram (phone)
     ▼
 TelegramAdapter        ← polls getUpdates, normalises Message objects, sends replies
     │
-    ├── CommandDispatcher  ← @-prefixed commands bypass the LLM entirely
-    │       ├── @podcast      → PodcastTool (NotebookLM background task)
-    │       ├── @websearch    → Kagi/DDG multi-query pipeline + Jina page fetch
-    │       ├── @trackprice   → PriceTrackerTool (vision LLM → BigQuery)
-    │       └── @clear        → wipe conversation history for this group
+    ├── CommandDispatcher  ← /-prefixed commands bypass the LLM entirely
+    │       ├── /podcast      → PodcastTool (NotebookLM background task)
+    │       ├── /websearch    → Kagi/DDG multi-query pipeline + Jina page fetch
+    │       ├── /trackprice   → PriceTrackerTool (vision LLM → BigQuery)
+    │       └── /clear        → wipe conversation history for this group
     │
     └── AgentRuntime          ← memory management, two-pass LLM call, tool dispatch
             ├── LLMProvider   ← OpenRouter (OpenAI-compatible chat completions)
@@ -44,7 +44,7 @@ TelegramAdapter        ← polls getUpdates, normalises Message objects, sends r
             ├── Database      ← SQLite: messages, summaries, notes, scheduled tasks
             └── TaskScheduler ← background asyncio loop for scheduled prompts
 
-Tools available to the LLM (called autonomously, not via @commands):
+Tools available to the LLM (called autonomously, not via /commands):
     web_search        ← Kagi search (requires approval gate)
     read_url          ← Jina Reader: fetches a URL and returns clean markdown
     write_note        ← save a short note to SQLite
@@ -61,8 +61,8 @@ Tools available to the LLM (called autonomously, not via @commands):
 |---|---|---|
 | Python | 3.12+ | `brew install python@3.12` |
 | uv | any | `brew install uv` |
-| NotebookLM CLI | any | `uv tool install notebooklm-mcp-cli` (optional, for `@podcast`) |
-| Google Cloud SDK | any | `brew install google-cloud-sdk` (optional, for `@trackprice`) |
+| NotebookLM CLI | any | `uv tool install notebooklm-mcp-cli` (optional, for `/podcast`) |
+| Google Cloud SDK | any | `brew install google-cloud-sdk` (optional, for `/trackprice`) |
 
 ---
 
@@ -109,71 +109,38 @@ Add the bot to a group. Either disable Privacy Mode for the bot via BotFather (`
 
 ## Configuration
 
-Copy `.env.example` to `.env`:
+Settings are loaded from `~/.config/tejas/config.yaml` via `tejas-config`. Secrets (API keys) are stored in the system keychain.
 
-```bash
-cp .env.example .env
+### `config.yaml` structure
+
+```yaml
+openrouter:
+  api_key: ""           # leave blank — stored in keychain as "openrouter_api_key"
+  model: anthropic/claude-3-5-sonnet
+  base_url: https://openrouter.ai/api/v1
+
+claw:
+  telegram_bot_token: "123456789:AAF..."   # from @BotFather
+  telegram_owner_id: "123456789"           # from @userinfobot
+  telegram_allowed_sender_ids: ""          # comma-separated extra IDs, or leave blank
+  telegram_poll_timeout: 30               # seconds per getUpdates long-poll call
+  database_path: ~/.claw/assistant.db
+  memory_window_messages: 20
+  memory_summary_trigger_messages: 40
+  request_timeout_seconds: 30.0
+  bigquery_project_id: ""      # leave blank to disable /trackprice
+  bigquery_dataset_id: economics
+  bigquery_table_id: german_shopping_receipts
 ```
 
-Then fill in your values:
+### Secrets (keychain)
 
-```dotenv
-# ── Required ──────────────────────────────────────────────────────────────────
+Store API keys with `tejas-config`:
 
-# Your OpenRouter API key (https://openrouter.ai/keys)
-OPENROUTER_API_KEY=sk-or-...
-
-# Model identifier — any OpenRouter-supported model, e.g.:
-#   anthropic/claude-3-5-sonnet          (recommended)
-#   openai/gpt-4o
-#   google/gemini-2.0-flash-thinking-exp
-OPENROUTER_MODEL=anthropic/claude-3-5-sonnet
-
-# Telegram bot token from @BotFather
-TELEGRAM_BOT_TOKEN=123456789:AAF...
-
-# Your Telegram user ID (from @userinfobot) — always allowed to send commands
-TELEGRAM_OWNER_ID=123456789
-
-# Your Kagi API key (https://kagi.com/settings?p=api) — required for web search
-KAGI_API_KEY=...
-
-# ── Optional ──────────────────────────────────────────────────────────────────
-
-# OpenRouter base URL (change only if using a proxy)
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
-# SQLite database file path
-DATABASE_PATH=assistant.db
-
-# Additional Telegram user IDs allowed to send commands, comma-separated
-# TELEGRAM_ALLOWED_SENDER_IDS=987654321,111222333
-
-# Long-poll timeout in seconds (how long each getUpdates call blocks)
-TELEGRAM_POLL_TIMEOUT=30
-
-# Sliding context window — how many recent messages to include in the LLM context
-MEMORY_WINDOW_MESSAGES=20
-
-# When the message count hits this number, compress history into a rolling summary
-MEMORY_SUMMARY_TRIGGER_MESSAGES=40
-
-# LLM call timeout in seconds
-REQUEST_TIMEOUT_SECONDS=30
-
-# Jina Reader API key for full-page fetches during @websearch (https://jina.ai/reader)
-# Leave blank for anonymous (rate-limited) access.
-# JINA_API_KEY=...
-
-# ── BigQuery (for @trackprice) ─────────────────────────────────────────────────
-# Leave BIGQUERY_PROJECT_ID unset to disable the @trackprice command.
-
-# GCP project that owns the BigQuery dataset
-# BIGQUERY_PROJECT_ID=my-gcp-project
-
-# Dataset and table (created automatically on first use)
-# BIGQUERY_DATASET_ID=economics
-# BIGQUERY_TABLE_ID=german_shopping_receipts
+```bash
+tejas-config secret set kagi_api_key      # paste key when prompted
+tejas-config secret set jina_api_key      # optional — for /websearch full-page fetch
+tejas-config secret set gemini_api_key    # optional
 ```
 
 ---
@@ -216,7 +183,7 @@ The LLM calls `write_note` / `list_notes` automatically when you ask it to remem
 
 ### Web search
 
-Web search operates in two modes: LLM-initiated (via a tool call) and command-initiated (via `@websearch`).
+Web search operates in two modes: LLM-initiated (via a tool call) and command-initiated (via `/websearch`).
 
 #### LLM-initiated search (with approval gate)
 
@@ -233,11 +200,11 @@ Claw: [summarised answer with references]
 
 Reply with any of: `ok`, `yes`, `sure`, `yep`, `yeah`, `proceed`, `go`, `go ahead`, `approve`, `do it`.
 
-#### `@websearch` command (direct, no approval gate)
+#### `/websearch` command (direct, no approval gate)
 
 ```
-@websearch <query>
-@websearch ddg <query>
+/websearch <query>
+/websearch ddg <query>
 ```
 
 The command pipeline:
@@ -252,8 +219,8 @@ The command pipeline:
 Examples:
 
 ```
-@websearch best Python async HTTP client 2025
-@websearch ddg openrouter model pricing
+/websearch best Python async HTTP client 2025
+/websearch ddg openrouter model pricing
 ```
 
 ---
@@ -274,7 +241,7 @@ Scheduled tasks are stored in SQLite and survive restarts. The scheduler runs in
 
 ### Podcast generation
 
-Send a PDF as a Telegram attachment (or a URL in the message body), along with an `@podcast` command, and my-claw will generate a NotebookLM deep-dive audio overview and send the `.m4a` back when ready.
+Send a PDF as a Telegram attachment (or a URL in the message body), along with a `/podcast` command, and my-claw will generate a NotebookLM deep-dive audio overview and send the `.m4a` back when ready.
 
 #### One-time setup
 
@@ -288,14 +255,14 @@ nlm login     # opens Chrome — log in with your Google account
 Attach a PDF and send a caption:
 
 ```
-@podcast econpod
+/podcast econpod
 ```
 
 Or provide a URL in the command:
 
 ```
-@podcast cspod https://arxiv.org/pdf/2501.12345
-@podcast ddpod https://papers.ssrn.com/sol3/papers.cfm?abstract_id=12345
+/podcast cspod https://arxiv.org/pdf/2501.12345
+/podcast ddpod https://papers.ssrn.com/sol3/papers.cfm?abstract_id=12345
 ```
 
 If both a URL and an attachment are present, the URL takes precedence.
@@ -326,7 +293,7 @@ Generation typically takes 2–5 minutes. The assistant replies immediately with
 
 ### Grocery price tracker
 
-Send a photo or PDF scan of a German supermarket receipt with the `@trackprice` command and my-claw will extract every line item via LLM vision, persist the data to BigQuery, and reply with a confirmation plus the 5 most recently inserted rows.
+Send a photo or PDF scan of a German supermarket receipt with the `/trackprice` command and my-claw will extract every line item via LLM vision, persist the data to BigQuery, and reply with a confirmation plus the 5 most recently inserted rows.
 
 #### One-time setup
 
@@ -345,22 +312,23 @@ gcloud auth application-default login
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` in `.env` to use a service account key.
 
-**3. Set env vars in `.env`:**
+**3. Set in `config.yaml`:**
 
-```dotenv
-BIGQUERY_PROJECT_ID=my-gcp-project
-BIGQUERY_DATASET_ID=personal
-BIGQUERY_TABLE_ID=german_shopping_receipts
+```yaml
+claw:
+  bigquery_project_id: my-gcp-project
+  bigquery_dataset_id: personal
+  bigquery_table_id: german_shopping_receipts
 ```
 
-If `BIGQUERY_PROJECT_ID` is not set, the `@trackprice` command is disabled (returns "not configured").
+If `bigquery_project_id` is blank, the `/trackprice` command is disabled (returns "not configured").
 
 #### Usage
 
 Attach a receipt image (JPEG, PNG) or a PDF scan and send:
 
 ```
-@trackprice
+/trackprice
 ```
 
 The assistant replies with something like:
@@ -419,16 +387,21 @@ LIMIT 20;
 
 ## Commands reference
 
-Commands are @-prefixed messages that bypass the LLM entirely. They are processed synchronously (except `@podcast`, which spawns a background task).
+Commands are `/`-prefixed messages that bypass the LLM entirely. They are processed synchronously (except `/podcast`, which spawns a background task).
+
+Telegram shows registered commands as an autocomplete list when you type `/` — register them once with BotFather using `/setcommands` (see [Telegram setup](#telegram-setup-one-time)).
 
 | Command | Usage | Description |
 |---|---|---|
-| `@podcast` | `@podcast <type> [url]` | Generate a NotebookLM podcast. Attach a PDF or provide a URL. Types: `econpod`, `cspod`, `ddpod`. |
-| `@websearch` | `@websearch [ddg] <query>` | Direct web search with LLM synthesis. Omit `ddg` for Kagi; add `ddg` for DuckDuckGo. |
-| `@trackprice` | `@trackprice` (with attachment) | Extract receipt items and save to BigQuery. Attach a receipt image or PDF. |
-| `@clear` | `@clear` | Wipe all message history and conversation summaries for the current group. |
+| `/podcast` | `/podcast <type> [url]` | Generate a NotebookLM podcast. Attach a PDF or provide a URL. Types: `econpod`, `cspod`, `ddpod`. |
+| `/websearch` | `/websearch [ddg] <query>` | Direct web search with LLM synthesis. Omit `ddg` for Kagi; add `ddg` for DuckDuckGo. |
+| `/trackprice` | `/trackprice` (with attachment) | Extract receipt items and save to BigQuery. Attach a receipt image or PDF. |
+| `/magazine` | `/magazine <epub> [chapter]` | List chapters or generate audio from a magazine chapter. |
+| `/cite` | `/cite <status\|list\|add <url>\|run [id]\|citations <id>>` | Manage citation tracking. |
+| `/clear` | `/clear` | Wipe conversation context for the current group (history kept in DB). |
+| `/commands` | `/commands` | Show this list. |
 
-Unrecognised `@commands` fall through to the LLM — they are not errors.
+Unrecognised `/commands` fall through to the LLM — they are not errors.
 
 ---
 
@@ -499,7 +472,7 @@ On startup, my-claw drains old updates by calling `getUpdates?offset=-1` before 
 
 Increase `REQUEST_TIMEOUT_SECONDS` in `.env`. Some models (especially large reasoning models) can take 20–60 seconds on first token.
 
-**`nlm` not found when triggering `@podcast`**
+**`nlm` not found when triggering `/podcast`**
 
 Install the NotebookLM CLI: `uv tool install notebooklm-mcp-cli`, then run `nlm login`. The `nlm` binary must be on your PATH.
 
@@ -511,15 +484,15 @@ Run `nlm login` again. Cookies last approximately 2–4 weeks.
 
 NotebookLM deep-dive generation usually takes 2–5 minutes but can take longer for large PDFs. The assistant polls for up to 60 minutes. If it consistently times out, check NotebookLM's status or try a shorter source.
 
-**`@trackprice` returns "not configured"**
+**`/trackprice` returns "not configured"**
 
-Set `BIGQUERY_PROJECT_ID` in `.env`. The command is disabled when this variable is absent.
+Set `bigquery_project_id` in `config.yaml`. The command is disabled when this field is blank.
 
-**`@trackprice` fails with a credentials error**
+**`/trackprice` fails with a credentials error**
 
 Run `gcloud auth application-default login`, or set `GOOGLE_APPLICATION_CREDENTIALS` to the path of a service account JSON key that has `bigquery.dataEditor` and `bigquery.jobUser` roles on the target project.
 
-**`@trackprice` returns "LLM returned invalid JSON"**
+**`/trackprice` returns "LLM returned invalid JSON"**
 
 The vision model failed to extract structured data from the receipt image. This can happen with very blurry, heavily skewed, or partially cropped receipts. Try a clearer photo taken flat-on under good lighting.
 
@@ -529,7 +502,7 @@ The table is created automatically on the first successful insert. If you see th
 
 **Kagi search returns an error about API balance**
 
-Your Kagi API account has run out of credits. Top up at https://kagi.com/settings?p=billing, or switch to DuckDuckGo with `@websearch ddg <query>`.
+Your Kagi API account has run out of credits. Top up at https://kagi.com/settings?p=billing, or switch to DuckDuckGo with `/websearch ddg <query>`.
 
 **Assistant repeats itself or loses context**
 

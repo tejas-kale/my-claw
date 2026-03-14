@@ -1,30 +1,30 @@
 [
   {
-    "usage": "@cite <status|list|add <url>|run [id]|citations <id>>",
+    "usage": "/cite <status|list|add <url>|run [id]|citations <id>>",
     "description": "Manage citation tracking: discover, list, and add papers."
   },
   {
-    "usage": "@podcast <type> [url]",
+    "usage": "/podcast <type> [url]",
     "description": "Create a podcast from a URL or PDF attachment."
   },
   {
-    "usage": "@websearch [ddg] <query>",
+    "usage": "/websearch [ddg] <query>",
     "description": "Search the web via Kagi (or DuckDuckGo with ddg prefix)."
   },
   {
-    "usage": "@magazine <epub> [chapter]",
+    "usage": "/magazine <epub> [chapter]",
     "description": "List chapters or generate audio from a magazine chapter."
   },
   {
-    "usage": "@trackprice",
+    "usage": "/trackprice",
     "description": "Extract and save line items from a receipt (attach image/PDF)."
   },
   {
-    "usage": "@clear",
+    "usage": "/clear",
     "description": "Clear conversation context for this chat (history is preserved in the database)."
   },
   {
-    "usage": "@commands",
+    "usage": "/commands",
     "description": "Show this list."
   }
 ]
