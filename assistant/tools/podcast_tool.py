@@ -343,16 +343,24 @@ async def _poll_and_send(
                             ready_msg = f"Your {podcast_type} podcast is ready!"
                         _TELEGRAM_MAX_BYTES = 50 * 1024 * 1024
                         if file_size > _TELEGRAM_MAX_BYTES:
+                            import shutil
+                            from pathlib import Path
+
                             LOGGER.warning(
                                 "Podcast file too large for Telegram (%d bytes): %s",
                                 file_size,
                                 output_path,
                             )
+                            dest_dir = Path.home() / "Documents" / "Resources" / "Custom Audio"
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            dest_path = dest_dir / Path(output_path).name
+                            shutil.copy2(output_path, dest_path)
+                            LOGGER.info("Copied oversized podcast to %s", dest_path)
                             await signal_adapter.send_message(
                                 group_id,
                                 f"{ready_msg}\n\nThe file is too large to send via Telegram "
                                 f"({file_size / 1024 / 1024:.0f} MB). "
-                                f"It has been saved locally at: {output_path}",
+                                f"It has been copied to {dest_path}",
                                 is_group=is_group,
                             )
                         else:
