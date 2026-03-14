@@ -341,12 +341,27 @@ async def _poll_and_send(
                             ready_msg = f"Your podcast of \"{paper_title}\" is ready!"
                         else:
                             ready_msg = f"Your {podcast_type} podcast is ready!"
-                        await signal_adapter.send_message(
-                            group_id,
-                            ready_msg,
-                            is_group=is_group,
-                            attachment_path=output_path,
-                        )
+                        _TELEGRAM_MAX_BYTES = 50 * 1024 * 1024
+                        if file_size > _TELEGRAM_MAX_BYTES:
+                            LOGGER.warning(
+                                "Podcast file too large for Telegram (%d bytes): %s",
+                                file_size,
+                                output_path,
+                            )
+                            await signal_adapter.send_message(
+                                group_id,
+                                f"{ready_msg}\n\nThe file is too large to send via Telegram "
+                                f"({file_size / 1024 / 1024:.0f} MB). "
+                                f"It has been saved locally at: {output_path}",
+                                is_group=is_group,
+                            )
+                        else:
+                            await signal_adapter.send_message(
+                                group_id,
+                                ready_msg,
+                                is_group=is_group,
+                                attachment_path=output_path,
+                            )
                         success = True
                 break
         else:
