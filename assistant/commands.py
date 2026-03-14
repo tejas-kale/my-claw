@@ -252,10 +252,13 @@ class CommandDispatcher:
         return answer
 
     async def _generate_sub_queries(self, query: str) -> list[str]:
+        from datetime import date
+
         messages = [
             {
                 "role": "system",
                 "content": (
+                    f"Today's date is {date.today().isoformat()}. "
                     "Generate 1-5 precise sub-queries optimised for search engines. "
                     "Always prefer fewer queries — only add more if the original query is complex "
                     "and genuinely benefits from multiple angles. "
