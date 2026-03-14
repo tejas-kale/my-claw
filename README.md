@@ -337,13 +337,11 @@ The assistant replies with something like:
 Saved 14 items from Rewe (2024-01-15), total: €23.45
 
 Last 5 rows:
-German                    English                   Price
-------------------------------------------------------------
-Vollmilch 3,5%            Whole Milk 3.5%            1.19
-Bio Eier 6er              Organic Eggs 6-pack        2.49
-Dinkel Brot               Spelt Bread                2.89
-Hähnchenbrust             Chicken Breast             4.99
-Griechischer Joghurt      Greek Yoghurt              1.79
+- Whole Milk 3.5% (Vollmilch 3,5%) — €1.19
+- Organic Eggs 6-pack (Bio Eier 6er) — €2.49
+- Spelt Bread (Dinkel Brot) — €2.89
+- Chicken Breast (Hähnchenbrust) — €4.99
+- Greek Yoghurt (Griechischer Joghurt) — €1.79
 ```
 
 #### BigQuery table schema

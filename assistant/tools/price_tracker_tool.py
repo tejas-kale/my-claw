@@ -161,7 +161,7 @@ class PriceTrackerTool:
     def _format_preview(
         self, extraction: dict[str, Any], rows: list[dict[str, Any]]
     ) -> str:
-        """Format a confirmation message + tabular preview for Signal."""
+        """Format a confirmation message + bullet-point preview."""
         supermarket = extraction.get("supermarket", "?")
         date = extraction.get("date", "?")
         total = float(extraction.get("total_price", 0))
@@ -170,12 +170,10 @@ class PriceTrackerTool:
             f"Saved {n_items} items from {supermarket} ({date}), total: \u20ac{total:.2f}",
             "",
             "Last 5 rows:",
-            f"{'German':<25} {'English':<25} {'Price':>7}",
-            "-" * 60,
         ]
         for row in rows:
-            german = str(row.get("item_name_german", ""))[:24]
-            english = str(row.get("item_name_english", ""))[:24]
+            english = str(row.get("item_name_english", ""))
+            german = str(row.get("item_name_german", ""))
             price = float(row.get("price", 0))
-            lines.append(f"{german:<25} {english:<25} {price:>7.2f}")
+            lines.append(f"- {english} ({german}) — \u20ac{price:.2f}")
         return "\n".join(lines)
