@@ -4,42 +4,57 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
+from tejas_config import load_config as _load_tejas_config
+from tejas_config import get_secret
 
 
-class Settings(BaseSettings):
-    """Environment-driven settings validated at startup."""
+class Settings(BaseModel):
+    """Application settings."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
-    openrouter_api_key: str = Field(..., alias="OPENROUTER_API_KEY")
-    openrouter_model: str = Field(..., alias="OPENROUTER_MODEL")
-    openrouter_base_url: str = Field(
-        default="https://openrouter.ai/api/v1",
-        alias="OPENROUTER_BASE_URL",
-    )
-    database_path: Path = Field(default=Path("assistant.db"), alias="DATABASE_PATH")
-    telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
-    telegram_owner_id: str = Field(..., alias="TELEGRAM_OWNER_ID")
+    openrouter_api_key: str
+    openrouter_model: str
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    database_path: Path = Path("assistant.db")
+    telegram_bot_token: str
+    telegram_owner_id: str
     # Comma-separated Telegram user IDs allowed to send commands (defaults to owner only).
-    telegram_allowed_sender_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_SENDER_IDS")
-    telegram_poll_timeout: int = Field(default=30, alias="TELEGRAM_POLL_TIMEOUT")
-    memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
-    memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
-    request_timeout_seconds: float = Field(default=30.0, alias="REQUEST_TIMEOUT_SECONDS")
-    kagi_api_key: str = Field(..., alias="KAGI_API_KEY")
-    jina_api_key: str = Field(default="", alias="JINA_API_KEY")
-    bigquery_project_id: str = Field(default="", alias="BIGQUERY_PROJECT_ID")
-    bigquery_dataset_id: str = Field(default="economics", alias="BIGQUERY_DATASET_ID")
-    bigquery_table_id: str = Field(default="german_shopping_receipts", alias="BIGQUERY_TABLE_ID")
-    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    telegram_allowed_sender_ids: str = ""
+    telegram_poll_timeout: int = 30
+    memory_window_messages: int = 20
+    memory_summary_trigger_messages: int = 40
+    request_timeout_seconds: float = 30.0
+    kagi_api_key: str
+    jina_api_key: str = ""
+    bigquery_project_id: str = ""
+    bigquery_dataset_id: str = "economics"
+    bigquery_table_id: str = "german_shopping_receipts"
+    gemini_api_key: str = ""
 
 
 def load_settings() -> Settings:
     """Load and validate settings."""
 
-    return Settings()
+    cfg = _load_tejas_config("claw")
+    return Settings(
+        openrouter_api_key=cfg.openrouter.api_key,
+        openrouter_model=cfg.openrouter.model,
+        openrouter_base_url=cfg.openrouter.base_url,
+        telegram_bot_token=cfg.claw.telegram_bot_token,
+        telegram_owner_id=cfg.claw.telegram_owner_id,
+        telegram_allowed_sender_ids=cfg.claw.telegram_allowed_sender_ids,
+        telegram_poll_timeout=cfg.claw.telegram_poll_timeout,
+        database_path=cfg.claw.database_path,
+        memory_window_messages=cfg.claw.memory_window_messages,
+        memory_summary_trigger_messages=cfg.claw.memory_summary_trigger_messages,
+        request_timeout_seconds=cfg.claw.request_timeout_seconds,
+        kagi_api_key=get_secret("kagi_api_key") or "",
+        jina_api_key=get_secret("jina_api_key") or "",
+        gemini_api_key=get_secret("gemini_api_key") or "",
+        bigquery_project_id=cfg.claw.bigquery_project_id,
+        bigquery_dataset_id=cfg.claw.bigquery_dataset_id,
+        bigquery_table_id=cfg.claw.bigquery_table_id,
+    )
 
 
 def allowed_telegram_senders(settings: Settings) -> frozenset[str]:

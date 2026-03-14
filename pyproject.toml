@@ -9,7 +9,7 @@ dependencies = [
     "google-cloud-bigquery>=3.0.0",
     "httpx>=0.27.0",
     "pydantic>=2.8.0",
-    "pydantic-settings>=2.4.0",
+    "tejas-config",
     "pymupdf>=1.24.0",
     "openai-agents>=0.0.17",
 ]
@@ -25,6 +25,9 @@ claw = "assistant.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["assistant"]
+
+[tool.uv.sources]
+tejas-config = { path = "../tejas-config", editable = true }
 
 [build-system]
 requires = ["hatchling"]

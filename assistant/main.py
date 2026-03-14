@@ -23,6 +23,7 @@ from assistant.tools.price_tracker_tool import PriceTrackerTool
 from assistant.tools.read_url_tool import ReadUrlTool
 from assistant.tools.registry import ToolRegistry
 from assistant.tools.time_tool import GetCurrentTimeTool
+from assistant.tools.citation_tracker_tool import CitationTrackerTool
 from assistant.tools.web_search_tool import KagiSearchTool
 
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +78,7 @@ async def run() -> None:
         db=db,
         price_tracker_tool=price_tracker_tool,
         magazine_tool=magazine_tool,
+        citation_tracker_tool=CitationTrackerTool(),
     )
 
     runtime = AgentRuntime(
