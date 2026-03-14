@@ -33,13 +33,23 @@ _PODCAST_USAGE = f"Usage: /podcast <type> [url]\nValid types: {', '.join(PODCAST
 
 TRANSIENT_COMMANDS: frozenset[str] = frozenset({"commands"})
 
+_ALIASES: dict[str, str] = {
+    "ws": "websearch",
+    "tp": "trackprice",
+    "pc": "podcast",
+    "mg": "magazine",
+    "ct": "cite",
+    "cl": "clear",
+    "cm": "commands",
+}
+
 
 def parse_command(text: str) -> tuple[str, list[str]] | None:
-    """Split an @-prefixed message into (command, args).
+    """Split a /-prefixed message into (command, args), resolving aliases.
 
     Returns:
-        A (command, args) tuple where command is lowercased, or None if text
-        is not a valid @command.
+        A (command, args) tuple where command is the canonical lowercased name,
+        or None if text is not a valid /command.
     """
     text = text.strip()
     if not text.startswith("/"):
@@ -47,7 +57,8 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
     parts = text[1:].split()
     if not parts:
         return None
-    return parts[0].lower(), parts[1:]
+    cmd = parts[0].lower()
+    return _ALIASES.get(cmd, cmd), parts[1:]
 
 
 class CommandDispatcher:
