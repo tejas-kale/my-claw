@@ -9,21 +9,19 @@ from datetime import datetime, timezone
 
 from assistant.agent_runtime import AgentRuntime
 from assistant.commands import CommandDispatcher
-from assistant.config import allowed_senders, load_settings
+from assistant.config import allowed_telegram_senders, load_settings
 from assistant.db import Database
 from assistant.llm.openrouter import OpenRouterProvider
 from assistant.models import Message
 from assistant.scheduler import TaskScheduler
-from assistant.signal_adapter import SignalAdapter
+from assistant.telegram_adapter import TelegramAdapter
 from assistant.tools.ddg_search_tool import DdgSearchTool
 from assistant.tools.magazine_tool import MagazineTool
-from assistant.tools.memory_tool import ReadNotesTool, SaveNoteTool
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.podcast_tool import PodcastTool
 from assistant.tools.price_tracker_tool import PriceTrackerTool
 from assistant.tools.read_url_tool import ReadUrlTool
 from assistant.tools.registry import ToolRegistry
-from assistant.tools.search_tool import FuzzyFilterTool, RipgrepSearchTool
 from assistant.tools.time_tool import GetCurrentTimeTool
 from assistant.tools.web_search_tool import KagiSearchTool
 
@@ -49,23 +47,17 @@ async def run() -> None:
     tools.register(ReadUrlTool(api_key=settings.jina_api_key))
     tools.register(WriteNoteTool(db))
     tools.register(ListNotesTool(db))
-    tools.register(SaveNoteTool(settings.memory_root))
-    tools.register(ReadNotesTool(settings.memory_root))
-    tools.register(RipgrepSearchTool(settings.memory_root))
-    tools.register(FuzzyFilterTool())
 
-    signal_adapter = SignalAdapter(
-        signal_cli_path=settings.signal_cli_path,
-        account=settings.signal_account,
-        poll_interval_seconds=settings.signal_poll_interval_seconds,
-        owner_number=settings.signal_owner_number,
-        allowed_senders=allowed_senders(settings),
+    telegram_adapter = TelegramAdapter(
+        bot_token=settings.telegram_bot_token,
+        poll_timeout=settings.telegram_poll_timeout,
+        allowed_sender_ids=allowed_telegram_senders(settings),
     )
 
-    podcast_tool = PodcastTool(signal_adapter=signal_adapter, llm=provider)
+    podcast_tool = PodcastTool(signal_adapter=telegram_adapter, llm=provider)
     tools.register(podcast_tool)
 
-    magazine_tool = MagazineTool(signal_adapter=signal_adapter)
+    magazine_tool = MagazineTool(signal_adapter=telegram_adapter)
 
     price_tracker_tool: PriceTrackerTool | None = None
     if settings.bigquery_project_id:
@@ -94,7 +86,6 @@ async def run() -> None:
         memory_window_messages=settings.memory_window_messages,
         summary_trigger_messages=settings.memory_summary_trigger_messages,
         request_timeout_seconds=settings.request_timeout_seconds,
-        memory_root=settings.memory_root,
         command_dispatcher=command_dispatcher,
     )
 
@@ -108,20 +99,20 @@ async def run() -> None:
                 is_group=True,
             )
         )
-        await signal_adapter.send_message(group_id, response, is_group=True)
+        await telegram_adapter.send_message(group_id, response, is_group=True)
 
     scheduler = TaskScheduler(db=db, handler=handle_scheduled_prompt)
 
     scheduler_task = asyncio.create_task(scheduler.run_forever(), name="task-scheduler")
 
     try:
-        async for message in signal_adapter.poll_messages():
+        async for message in telegram_adapter.poll_messages():
             try:
                 reply = await runtime.handle_message(message)
             except Exception:
                 LOGGER.exception("Unhandled error processing message from %s", message.sender_id)
                 reply = "Sorry, something went wrong on my end. Please try again."
-            await signal_adapter.send_message(message.group_id, reply, is_group=message.is_group)
+            await telegram_adapter.send_message(message.group_id, reply, is_group=message.is_group)
     except asyncio.CancelledError:
         raise
     finally:

@@ -20,19 +20,14 @@ class Settings(BaseSettings):
         alias="OPENROUTER_BASE_URL",
     )
     database_path: Path = Field(default=Path("assistant.db"), alias="DATABASE_PATH")
-    signal_cli_path: str = Field(default="signal-cli", alias="SIGNAL_CLI_PATH")
-    signal_account: str = Field(..., alias="SIGNAL_ACCOUNT")
-    signal_owner_number: str = Field(..., alias="SIGNAL_OWNER_NUMBER")
-    # Comma-separated E.164 numbers allowed to send commands (defaults to owner only).
-    signal_allowed_senders: str = Field(default="", alias="SIGNAL_ALLOWED_SENDERS")
-    signal_poll_interval_seconds: float = Field(default=30.0, alias="SIGNAL_POLL_INTERVAL_SECONDS")
+    telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
+    telegram_owner_id: str = Field(..., alias="TELEGRAM_OWNER_ID")
+    # Comma-separated Telegram user IDs allowed to send commands (defaults to owner only).
+    telegram_allowed_sender_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_SENDER_IDS")
+    telegram_poll_timeout: int = Field(default=30, alias="TELEGRAM_POLL_TIMEOUT")
     memory_window_messages: int = Field(default=20, alias="MEMORY_WINDOW_MESSAGES")
     memory_summary_trigger_messages: int = Field(default=40, alias="MEMORY_SUMMARY_TRIGGER_MESSAGES")
     request_timeout_seconds: float = Field(default=30.0, alias="REQUEST_TIMEOUT_SECONDS")
-    memory_root: Path = Field(
-        default=Path.home() / ".my-claw" / "memory",
-        alias="MY_CLAW_MEMORY",
-    )
     kagi_api_key: str = Field(..., alias="KAGI_API_KEY")
     jina_api_key: str = Field(default="", alias="JINA_API_KEY")
     bigquery_project_id: str = Field(default="", alias="BIGQUERY_PROJECT_ID")
@@ -47,11 +42,11 @@ def load_settings() -> Settings:
     return Settings()
 
 
-def allowed_senders(settings: Settings) -> frozenset[str]:
-    """Return the set of E.164 numbers permitted to send commands.
+def allowed_telegram_senders(settings: Settings) -> frozenset[str]:
+    """Return the set of Telegram user IDs permitted to send commands.
 
-    Always includes the owner. Additional numbers can be added via the
-    SIGNAL_ALLOWED_SENDERS env var as a comma-separated list.
+    Always includes the owner. Additional IDs can be added via the
+    TELEGRAM_ALLOWED_SENDER_IDS env var as a comma-separated list.
     """
-    extra = {n.strip() for n in settings.signal_allowed_senders.split(",") if n.strip()}
-    return frozenset({settings.signal_owner_number} | extra)
+    extra = {n.strip() for n in settings.telegram_allowed_sender_ids.split(",") if n.strip()}
+    return frozenset({settings.telegram_owner_id} | extra)
