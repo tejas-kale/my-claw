@@ -115,6 +115,11 @@ async def run() -> None:
                 LOGGER.exception("Unhandled error processing message from %s", message.sender_id)
                 reply = "Sorry, something went wrong on my end. Please try again."
             await telegram_adapter.send_message(message.group_id, reply, is_group=message.is_group)
+            for attachment in message.attachments:
+                try:
+                    Path(attachment["local_path"]).unlink(missing_ok=True)
+                except Exception:
+                    LOGGER.warning("Failed to delete temp file %s", attachment["local_path"])
     except asyncio.CancelledError:
         raise
     finally:

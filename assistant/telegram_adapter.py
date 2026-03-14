@@ -77,7 +77,9 @@ class TelegramAdapter:
             results = data.get("result", [])
             if results:
                 self._offset = results[-1]["update_id"] + 1
-                LOGGER.info("Drained %d stale update(s); starting from offset %d", len(results), self._offset)
+                # offset=-1 returns only the most recent update; acknowledging it causes
+                # Telegram to discard the entire backlog on the next getUpdates call.
+                LOGGER.info("Discarding stale updates; resuming from offset %d", self._offset)
         except Exception:
             LOGGER.exception("Failed to drain stale messages; continuing from offset 0")
 
@@ -173,12 +175,12 @@ class TelegramAdapter:
                 return None
 
             download_url = f"{_TELEGRAM_API_BASE}/file/bot{self._bot_token}/{file_path}"
-            file_resp = await client.get(download_url)
-            file_resp.raise_for_status()
-
             suffix = Path(hint_filename).suffix or Path(file_path).suffix or ""
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(file_resp.content)
+                async with client.stream("GET", download_url) as file_resp:
+                    file_resp.raise_for_status()
+                    async for chunk in file_resp.aiter_bytes():
+                        tmp.write(chunk)
                 return tmp.name
         except Exception:
             LOGGER.exception("Failed to download file_id=%s", file_id)
