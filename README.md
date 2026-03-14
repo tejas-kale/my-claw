@@ -91,7 +91,7 @@ Message [@BotFather](https://t.me/BotFather) on Telegram:
 /newbot
 ```
 
-Follow the prompts to pick a name and username. BotFather will give you a **bot token** — save it as `TELEGRAM_BOT_TOKEN`.
+Follow the prompts to pick a name and username. BotFather will give you a **bot token** — store it in the keychain: `tejas-config secret set telegram_bot_token`.
 
 ### 2. Find your Telegram user ID
 
@@ -120,7 +120,6 @@ openrouter:
   base_url: https://openrouter.ai/api/v1
 
 claw:
-  telegram_bot_token: "123456789:AAF..."   # from @BotFather
   telegram_owner_id: "123456789"           # from @userinfobot
   telegram_allowed_sender_ids: ""          # comma-separated extra IDs, or leave blank
   telegram_poll_timeout: 30               # seconds per getUpdates long-poll call
@@ -138,9 +137,10 @@ claw:
 Store API keys with `tejas-config`:
 
 ```bash
-tejas-config secret set kagi_api_key      # paste key when prompted
-tejas-config secret set jina_api_key      # optional — for /websearch full-page fetch
-tejas-config secret set gemini_api_key    # optional
+tejas-config secret set telegram_bot_token  # from @BotFather
+tejas-config secret set kagi_api_key        # paste key when prompted
+tejas-config secret set jina_api_key        # optional — for /websearch full-page fetch
+tejas-config secret set gemini_api_key      # optional
 ```
 
 ---

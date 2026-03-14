@@ -40,7 +40,7 @@ def load_settings() -> Settings:
         openrouter_api_key=cfg.openrouter.api_key,
         openrouter_model=cfg.openrouter.model,
         openrouter_base_url=cfg.openrouter.base_url,
-        telegram_bot_token=cfg.claw.telegram_bot_token,
+        telegram_bot_token=get_secret("telegram_bot_token") or "",
         telegram_owner_id=cfg.claw.telegram_owner_id,
         telegram_allowed_sender_ids=cfg.claw.telegram_allowed_sender_ids,
         telegram_poll_timeout=cfg.claw.telegram_poll_timeout,
