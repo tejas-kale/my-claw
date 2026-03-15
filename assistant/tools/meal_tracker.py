@@ -282,16 +282,16 @@ class MealTracker:
     ) -> list[dict[str, Any]]:
         from google.cloud import bigquery  # type: ignore[import-untyped]
 
-        date_str = date.isoformat()
         query = f"""
             SELECT *
             FROM `{project}.{dataset}.{table}`
-            WHERE DATE(logged_at, @timezone) = '{date_str}'
+            WHERE DATE(logged_at, @timezone) = @date
             ORDER BY logged_at ASC
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("timezone", "STRING", tz),
+                bigquery.ScalarQueryParameter("date", "DATE", date.isoformat()),
             ]
         )
         result = self._bq_client.query(query, job_config=job_config).result()

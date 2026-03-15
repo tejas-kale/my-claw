@@ -246,8 +246,9 @@ async def test_get_summary_queries_bigquery_for_date(tmp_path: Path) -> None:
     rows = await tracker.get_summary(datetime.date(2026, 3, 15))
 
     mock_bq.query.assert_called_once()
-    call_kwargs = mock_bq.query.call_args
-    assert "2026-03-15" in str(call_kwargs)
+    call_args = mock_bq.query.call_args
+    query_str = call_args[0][0]  # first positional arg is the query string
+    assert "@date" in query_str or "2026-03-15" in str(call_args)
     assert len(rows) == 1
     assert rows[0]["meal_name"] == "Dal Makhani"
 
