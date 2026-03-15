@@ -132,8 +132,8 @@ async def run() -> None:
         price_tracker_tool = PriceTrackerTool(
             llm=provider,
             bq_project=settings.bigquery_project_id,
-            bq_dataset=settings.bigquery_dataset_id,
-            bq_table=settings.bigquery_table_id,
+            bq_dataset=settings.price_bigquery_dataset_id,
+            bq_table=settings.price_bigquery_table_id,
         )
 
     if settings.bigquery_project_id:

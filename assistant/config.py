@@ -27,8 +27,8 @@ class Settings(BaseModel):
     kagi_api_key: str
     jina_api_key: str = ""
     bigquery_project_id: str = ""
-    bigquery_dataset_id: str = "economics"
-    bigquery_table_id: str = "german_shopping_receipts"
+    price_bigquery_dataset_id: str = "economics"
+    price_bigquery_table_id: str = "german_shopping_receipts"
     gemini_api_key: str = ""
     meal_nutrition_memory_path: str = "~/.claw/meal_nutrition_memory.md"
     health_bigquery_dataset_id: str = "health"
@@ -56,8 +56,8 @@ def load_settings() -> Settings:
         jina_api_key=get_secret("jina_api_key") or "",
         gemini_api_key=get_secret("gemini_api_key") or "",
         bigquery_project_id=cfg.claw.bigquery_project_id,
-        bigquery_dataset_id=cfg.claw.bigquery_dataset_id,
-        bigquery_table_id=cfg.claw.bigquery_table_id,
+        price_bigquery_dataset_id=getattr(cfg.claw, "price_bigquery_dataset_id", None) or getattr(cfg.claw, "bigquery_dataset_id", None) or "economics",
+        price_bigquery_table_id=getattr(cfg.claw, "price_bigquery_table_id", None) or getattr(cfg.claw, "bigquery_table_id", None) or "german_shopping_receipts",
         meal_nutrition_memory_path=getattr(cfg.claw, "meal_nutrition_memory_path", None) or "~/.claw/meal_nutrition_memory.md",
         health_bigquery_dataset_id=getattr(cfg.claw, "health_bigquery_dataset_id", None) or "health",
         health_bigquery_table_id=getattr(cfg.claw, "health_bigquery_table_id", None) or "meals",
