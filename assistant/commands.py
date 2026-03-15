@@ -7,6 +7,7 @@ An unrecognised /command returns None, letting it fall through to the LLM.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt_mod
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from assistant.tools.citation_tracker_tool import CitationTrackerTool
     from assistant.tools.ddg_search_tool import DdgSearchTool
     from assistant.tools.magazine_tool import MagazineTool
+    from assistant.tools.meal_tracker import MealTracker
     from assistant.tools.podcast_tool import PodcastTool
     from assistant.tools.price_tracker_tool import PriceTrackerTool
     from assistant.tools.read_url_tool import ReadUrlTool
@@ -41,7 +43,50 @@ _ALIASES: dict[str, str] = {
     "ct": "cite",
     "cl": "clear",
     "cm": "commands",
+    "tm": "trackmeal",
 }
+
+# Matches: 200gms, 200gm, 200g, 1.5cups, 1.5cup
+_PORTION_RE = re.compile(r"^(\d+(?:\.\d+)?)(gms?|gm?|cups?)$", re.IGNORECASE)
+
+
+def _parse_portion(
+    args: list[str],
+) -> tuple[str, float | None, str | None]:
+    """Split args into (meal_name, portion_amount, portion_unit).
+
+    Unit normalization: g / gm / gms → "gms"; cup / cups → "cups".
+    Plain number with no suffix → "units". Returns ("", None, None) if invalid.
+    """
+    last = args[-1]
+    m = _PORTION_RE.match(last)
+    if m:
+        amount = float(m.group(1))
+        raw_unit = m.group(2).lower()
+        unit = "gms" if raw_unit in ("g", "gm", "gms") else "cups"
+        meal_name = " ".join(args[:-1]).strip()
+        return meal_name, amount, unit
+    # Try plain number → units
+    try:
+        amount = float(last)
+        meal_name = " ".join(args[:-1]).strip()
+        return meal_name, amount, "units"
+    except ValueError:
+        return "", None, None
+
+
+def _format_summary_raw(meals: list[dict], date: _dt_mod.date) -> str:
+    """Fallback summary format when no LLM is available."""
+    lines = [f"Meals logged for {date.strftime('%d %b %Y')}:"]
+    total = 0.0
+    for m in meals:
+        kcal = m.get("kcal") or 0.0
+        total += kcal
+        lines.append(
+            f"• {m['meal_name']} {m['portion_amount']:.0f}{m['portion_unit']} — {kcal:.0f} kcal"
+        )
+    lines.append(f"Total: {total:.0f} kcal / 2300 goal")
+    return "\n".join(lines)
 
 
 def parse_command(text: str) -> tuple[str, list[str]] | None:
@@ -78,6 +123,7 @@ class CommandDispatcher:
         price_tracker_tool: PriceTrackerTool | None = None,
         magazine_tool: MagazineTool | None = None,
         citation_tracker_tool: CitationTrackerTool | None = None,
+        meal_tracker: MealTracker | None = None,
     ) -> None:
         self._podcast_tool = podcast_tool
         self._kagi_search_tool = kagi_search_tool
@@ -88,6 +134,7 @@ class CommandDispatcher:
         self._price_tracker_tool = price_tracker_tool
         self._magazine_tool = magazine_tool
         self._citation_tracker_tool = citation_tracker_tool
+        self._meal_tracker = meal_tracker
         self._pending_epub: dict[str, str] = {}  # group_id -> epub
 
     async def dispatch(self, message: Message) -> str | None:
@@ -128,6 +175,8 @@ class CommandDispatcher:
             return await self._handle_cite(args)
         if command == "commands":
             return self._handle_commands()
+        if command == "trackmeal":
+            return await self._handle_trackmeal(args)
         return None
 
     async def _handle_cite(self, args: list[str]) -> str:
@@ -339,6 +388,100 @@ class CommandDispatcher:
         chapters = await self._magazine_tool.list_chapters(epub)
         self._pending_epub[message.group_id] = epub
         return f"{chapters}\n\nReply with a chapter number to generate audio."
+
+    async def _handle_trackmeal(self, args: list[str]) -> str:
+        _USAGE = (
+            "Usage: /tm <meal> <portion>\n"
+            "Examples: /tm dal makhani 200gms  |  /tm chicken biryani 1.5cups  |  /tm samosa 2"
+        )
+        _SUMMARY_USAGE = (
+            "Usage: /tm summary [month day]\n"
+            "Examples: /tm summary  |  /tm summary mar 15"
+        )
+        if not args:
+            return _USAGE
+
+        # 1. Summary subcommand must be checked first.
+        if args[0].lower() == "summary":
+            return await self._handle_trackmeal_summary(args[1:], _SUMMARY_USAGE)
+
+        # 2. Parse portion from last token.
+        meal_name, portion_amount, portion_unit = _parse_portion(args)
+        if portion_amount is None:
+            return _USAGE
+        if not meal_name:
+            return _USAGE
+
+        if self._meal_tracker is None:
+            return "Meal tracker is not configured."
+        return await self._meal_tracker.track(meal_name, portion_amount, portion_unit)
+
+    async def _handle_trackmeal_summary(self, args: list[str], usage: str) -> str:
+        import calendar
+
+        if not args:
+            target_date = _dt_mod.date.today()
+        else:
+            month_abbrevs = {
+                "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+                "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+            }
+            month_str = args[0].lower()
+            if month_str not in month_abbrevs:
+                return usage
+            if len(args) < 2:
+                return usage
+            try:
+                day = int(args[1])
+            except ValueError:
+                return usage
+            month = month_abbrevs[month_str]
+            year = _dt_mod.date.today().year
+            _, max_day = calendar.monthrange(year, month)
+            if day < 1 or day > max_day:
+                month_name = _dt_mod.date(year, month, 1).strftime("%B")
+                return f"Invalid date: {month_name} doesn't have {day} days."
+            target_date = _dt_mod.date(year, month, day)
+
+        if self._meal_tracker is None:
+            return "Meal tracker is not configured."
+
+        meals = await self._meal_tracker.get_summary(target_date)
+        if not meals:
+            return f"No meals logged for {target_date.strftime('%d %b %Y')}."
+
+        # Pass raw data to LLM for analysis and tips.
+        if self._llm is None:
+            return _format_summary_raw(meals, target_date)
+
+        return await self._generate_summary_text(meals, target_date)
+
+    async def _generate_summary_text(
+        self, meals: list[dict], target_date: _dt_mod.date
+    ) -> str:
+        from assistant.tools.get_meal_summary_tool import _format_meals
+
+        raw = _format_meals(meals)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a nutrition assistant. Analyze the meal log and provide a concise summary. "
+                    "Flag: fiber <25g (low), sodium >2000mg (high), protein <50g (low). "
+                    "End with exactly 3 concrete actionable tips for tomorrow. "
+                    "Format for Telegram: bullet points, no markdown tables."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Meals logged for {target_date.strftime('%d %b %Y')} "
+                    f"(goal: 2300 kcal):\n\n{raw}"
+                ),
+            },
+        ]
+        response = await self._llm.generate(messages)
+        return response.content
 
     async def _handle_podcast(self, args: list[str], message: Message) -> str:
         if self._podcast_tool is None:

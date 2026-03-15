@@ -6,7 +6,8 @@ Written RED-first: all tests in this file must fail before implementation begins
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -939,3 +940,115 @@ class TestCommandDispatcherCite:
         assert result is not None
         assert "foobar" in result
         assert "unknown" in result.lower()
+
+
+# ===========================================================================
+# CommandDispatcher.dispatch — /trackmeal (/tm)
+# ===========================================================================
+
+
+def _make_dispatcher_with_tracker(tracker=None) -> CommandDispatcher:
+    mock_tracker = tracker or AsyncMock()
+    mock_tracker.track = AsyncMock(return_value="Logged dal makhani.")
+    return CommandDispatcher(meal_tracker=mock_tracker)
+
+
+class TestTrackMealAlias:
+    def test_parse_command_tm_resolves_to_trackmeal(self) -> None:
+        result = parse_command("/tm dal makhani 200gms")
+        assert result is not None
+        assert result[0] == "trackmeal"
+
+
+class TestTrackMealPortionParsing:
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_gms_portion(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm dal makhani 200gms"))
+        tracker.track.assert_called_once_with("dal makhani", 200.0, "gms")
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_g_normalizes_to_gms(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm samosa 150g"))
+        tracker.track.assert_called_once_with("samosa", 150.0, "gms")
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_cups_portion(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm chicken biryani 1.5cups"))
+        tracker.track.assert_called_once_with("chicken biryani", 1.5, "cups")
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_plain_number_as_units(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm samosa 2"))
+        tracker.track.assert_called_once_with("samosa", 2.0, "units")
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_missing_portion_returns_usage_hint(self) -> None:
+        d = _make_dispatcher_with_tracker()
+        result = await d.dispatch(_msg("/tm dal makhani"))
+        assert result is not None
+        assert "usage" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_empty_meal_name_returns_usage_hint(self) -> None:
+        d = _make_dispatcher_with_tracker()
+        result = await d.dispatch(_msg("/tm 200gms"))
+        assert result is not None
+        assert "usage" in result.lower()
+
+
+class TestTrackMealSummary:
+    @pytest.mark.asyncio
+    async def test_trackmeal_summary_checked_before_portion_parsing(self) -> None:
+        tracker = AsyncMock()
+        tracker.get_summary = AsyncMock(return_value=[])
+        d = CommandDispatcher(meal_tracker=tracker, llm=None)
+        result = await d.dispatch(_msg("/tm summary"))
+        assert result is not None
+        assert "no meals" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_summary_today_calls_get_summary(self, tmp_path) -> None:
+        tracker = AsyncMock()
+        tracker.get_summary = AsyncMock(return_value=[])
+        d = CommandDispatcher(meal_tracker=tracker, llm=None)
+        await d.dispatch(_msg("/tm summary"))
+        tracker.get_summary.assert_called_once()
+        date_arg = tracker.get_summary.call_args[0][0]
+        assert date_arg == date.today()
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_summary_specific_date(self, tmp_path) -> None:
+        tracker = AsyncMock()
+        tracker.get_summary = AsyncMock(return_value=[])
+        d = CommandDispatcher(meal_tracker=tracker, llm=None)
+        await d.dispatch(_msg("/tm summary mar 15"))
+        tracker.get_summary.assert_called_once()
+        date_arg = tracker.get_summary.call_args[0][0]
+        assert date_arg.month == 3
+        assert date_arg.day == 15
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_summary_invalid_day_returns_error(self) -> None:
+        d = _make_dispatcher_with_tracker()
+        result = await d.dispatch(_msg("/tm summary feb 30"))
+        assert result is not None
+        assert "invalid" in result.lower() or "february" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_summary_month_without_day_returns_usage_hint(self) -> None:
+        d = _make_dispatcher_with_tracker()
+        result = await d.dispatch(_msg("/tm summary mar"))
+        assert result is not None
+        assert "usage" in result.lower()
