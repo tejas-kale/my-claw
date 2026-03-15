@@ -96,7 +96,13 @@ class MealTracker:
             path = self._memory_path()
             await asyncio.to_thread(_append_memory_entry, path, entry)
 
-    async def track(self, meal_name: str, portion_amount: float, portion_unit: str) -> str:
+    async def track(
+        self,
+        meal_name: str,
+        portion_amount: float,
+        portion_unit: str,
+        logged_at: datetime.datetime | None = None,
+    ) -> str:
         """Full meal tracking flow: memory check → Gemini → BigQuery → formatted reply."""
         memory_entry = await self._check_memory(meal_name)
         source = "memory" if memory_entry is not None else "search"
@@ -115,6 +121,7 @@ class MealTracker:
                     source_summary,
                 )
 
+        resolved_logged_at = logged_at or datetime.datetime.now(timezone.utc)
         try:
             await self._insert_bigquery(
                 meal_name=meal_name,
@@ -122,6 +129,7 @@ class MealTracker:
                 portion_unit=portion_unit,
                 nutrients=nutrients,
                 source=source,
+                logged_at=resolved_logged_at,
             )
         except Exception as exc:
             LOGGER.error("BigQuery insert failed for %r: %s", meal_name, exc)
@@ -277,6 +285,7 @@ class MealTracker:
         portion_unit: str,
         nutrients: dict[str, float | None],
         source: str,
+        logged_at: datetime.datetime | None = None,
     ) -> None:
         """Insert one meal row into BigQuery. No-op if bq_client is None."""
         if self._bq_client is None:
@@ -286,7 +295,7 @@ class MealTracker:
             "portion_amount": portion_amount,
             "portion_unit": portion_unit,
             "source": source,
-            "logged_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "logged_at": logged_at.isoformat() if logged_at else datetime.datetime.now(timezone.utc).isoformat(),
         }
         for field in _NUTRIENT_FIELDS:
             row[field] = nutrients.get(field)

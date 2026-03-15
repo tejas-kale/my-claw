@@ -48,31 +48,75 @@ _ALIASES: dict[str, str] = {
 
 # Matches: 200gms, 200gm, 200g, 1.5cups, 1.5cup
 _PORTION_RE = re.compile(r"^(\d+(?:\.\d+)?)(gms?|gm?|cups?)$", re.IGNORECASE)
+_DATE_TOKEN_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})$")
+_TIME_TOKEN_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
 def _parse_portion(
     args: list[str],
-) -> tuple[str, float | None, str | None]:
-    """Split args into (meal_name, portion_amount, portion_unit).
+) -> tuple[str, float | None, str | None, _dt_mod.datetime | None]:
+    """Split args into (meal_name, portion_amount, portion_unit, logged_at).
 
+    After the portion token, optional date (D.M / DD.MM) and/or time (H:MM / HH:MM)
+    tokens are parsed. logged_at is a UTC-aware datetime or None if not provided.
     Unit normalization: g / gm / gms → "gms"; cup / cups → "cups".
-    Plain number with no suffix → "units". Returns ("", None, None) if invalid.
+    Plain number with no suffix → "units". Returns ("", None, None, None) if invalid.
     """
-    last = args[-1]
+    if not args:
+        return "", None, None, None
+
+    # Work backwards from the end to extract date/time tokens
+    remaining = list(args)
+    date_part = None
+    time_part = None
+
+    while remaining:
+        token = remaining[-1]
+        dm = _DATE_TOKEN_RE.match(token)
+        tm = _TIME_TOKEN_RE.match(token)
+        if dm and date_part is None:
+            day, month = int(dm.group(1)), int(dm.group(2))
+            try:
+                date_part = _dt_mod.date(_dt_mod.date.today().year, month, day)
+                remaining.pop()
+                continue
+            except ValueError:
+                pass
+        if tm and time_part is None:
+            hour, minute = int(tm.group(1)), int(tm.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                time_part = _dt_mod.time(hour, minute)
+                remaining.pop()
+                continue
+        break  # not a date/time token, stop scanning
+
+    if not remaining:
+        return "", None, None, None
+
+    last = remaining[-1]
     m = _PORTION_RE.match(last)
     if m:
         amount = float(m.group(1))
         raw_unit = m.group(2).lower()
         unit = "gms" if raw_unit in ("g", "gm", "gms") else "cups"
-        meal_name = " ".join(args[:-1]).strip()
-        return meal_name, amount, unit
-    # Try plain number → units
-    try:
-        amount = float(last)
-        meal_name = " ".join(args[:-1]).strip()
-        return meal_name, amount, "units"
-    except ValueError:
-        return "", None, None
+        meal_name = " ".join(remaining[:-1]).strip()
+    else:
+        try:
+            amount = float(last)
+            unit = "units"
+            meal_name = " ".join(remaining[:-1]).strip()
+        except ValueError:
+            return "", None, None, None
+
+    # Build logged_at from date/time parts. The entered time is stored as-is
+    # with a UTC timezone marker; no local offset conversion is applied.
+    logged_at = None
+    if date_part is not None or time_part is not None:
+        d = date_part or _dt_mod.date.today()
+        t = time_part or _dt_mod.time(0, 0)
+        logged_at = _dt_mod.datetime.combine(d, t, tzinfo=_dt_mod.timezone.utc)
+
+    return meal_name, amount, unit, logged_at
 
 
 def _format_summary_raw(meals: list[dict], date: _dt_mod.date) -> str:
@@ -406,7 +450,7 @@ class CommandDispatcher:
             return await self._handle_trackmeal_summary(args[1:], _SUMMARY_USAGE)
 
         # 2. Parse portion from last token.
-        meal_name, portion_amount, portion_unit = _parse_portion(args)
+        meal_name, portion_amount, portion_unit, logged_at = _parse_portion(args)
         if portion_amount is None:
             return _USAGE
         if not meal_name:
@@ -414,7 +458,12 @@ class CommandDispatcher:
 
         if self._meal_tracker is None:
             return "Meal tracker is not configured."
-        return await self._meal_tracker.track(meal_name, portion_amount, portion_unit)
+        return await self._meal_tracker.track(
+            meal_name=meal_name,
+            portion_amount=portion_amount,
+            portion_unit=portion_unit,
+            logged_at=logged_at,
+        )
 
     async def _handle_trackmeal_summary(self, args: list[str], usage: str) -> str:
         import calendar

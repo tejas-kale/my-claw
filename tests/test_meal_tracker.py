@@ -325,3 +325,34 @@ async def test_track_null_nutrients_still_inserts_row_but_skips_memory(tmp_path:
     # Memory NOT saved when all nutrients are null (would write garbage to file)
     tracker._save_memory.assert_not_called()
     assert "incomplete" in reply.lower() or "mystery dish" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_track_uses_provided_logged_at(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    tracker._call_gemini = AsyncMock(return_value={f: 1.0 for f in _NUTRIENT_FIELDS})
+    tracker._save_memory = AsyncMock()
+    tracker._insert_bigquery = AsyncMock()
+    tracker._llm.generate = AsyncMock(return_value=_make_llm_response(content="Source."))
+
+    custom_time = datetime.datetime(2026, 3, 14, 17, 0, tzinfo=datetime.timezone.utc)
+    await tracker.track("dal makhani", 200.0, "gms", logged_at=custom_time)
+
+    call_kwargs = tracker._insert_bigquery.call_args[1]
+    assert call_kwargs["logged_at"] == custom_time
+
+
+@pytest.mark.asyncio
+async def test_track_uses_utcnow_when_logged_at_is_none(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    tracker._call_gemini = AsyncMock(return_value={f: 1.0 for f in _NUTRIENT_FIELDS})
+    tracker._save_memory = AsyncMock()
+    tracker._insert_bigquery = AsyncMock()
+    tracker._llm.generate = AsyncMock(return_value=_make_llm_response(content="Source."))
+
+    before = datetime.datetime.now(datetime.timezone.utc)
+    await tracker.track("dal makhani", 200.0, "gms", logged_at=None)
+    after = datetime.datetime.now(datetime.timezone.utc)
+
+    call_kwargs = tracker._insert_bigquery.call_args[1]
+    assert before <= call_kwargs["logged_at"] <= after

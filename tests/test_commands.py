@@ -967,7 +967,7 @@ class TestTrackMealPortionParsing:
         tracker.track = AsyncMock(return_value="ok")
         d = CommandDispatcher(meal_tracker=tracker)
         await d.dispatch(_msg("/tm dal makhani 200gms"))
-        tracker.track.assert_called_once_with("dal makhani", 200.0, "gms")
+        tracker.track.assert_called_once_with(meal_name="dal makhani", portion_amount=200.0, portion_unit="gms", logged_at=None)
 
     @pytest.mark.asyncio
     async def test_trackmeal_parses_g_normalizes_to_gms(self) -> None:
@@ -975,7 +975,7 @@ class TestTrackMealPortionParsing:
         tracker.track = AsyncMock(return_value="ok")
         d = CommandDispatcher(meal_tracker=tracker)
         await d.dispatch(_msg("/tm samosa 150g"))
-        tracker.track.assert_called_once_with("samosa", 150.0, "gms")
+        tracker.track.assert_called_once_with(meal_name="samosa", portion_amount=150.0, portion_unit="gms", logged_at=None)
 
     @pytest.mark.asyncio
     async def test_trackmeal_parses_cups_portion(self) -> None:
@@ -983,7 +983,7 @@ class TestTrackMealPortionParsing:
         tracker.track = AsyncMock(return_value="ok")
         d = CommandDispatcher(meal_tracker=tracker)
         await d.dispatch(_msg("/tm chicken biryani 1.5cups"))
-        tracker.track.assert_called_once_with("chicken biryani", 1.5, "cups")
+        tracker.track.assert_called_once_with(meal_name="chicken biryani", portion_amount=1.5, portion_unit="cups", logged_at=None)
 
     @pytest.mark.asyncio
     async def test_trackmeal_parses_plain_number_as_units(self) -> None:
@@ -991,7 +991,57 @@ class TestTrackMealPortionParsing:
         tracker.track = AsyncMock(return_value="ok")
         d = CommandDispatcher(meal_tracker=tracker)
         await d.dispatch(_msg("/tm samosa 2"))
-        tracker.track.assert_called_once_with("samosa", 2.0, "units")
+        tracker.track.assert_called_once_with(meal_name="samosa", portion_amount=2.0, portion_unit="units", logged_at=None)
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_date_and_time(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm dal makhani 200gms 15.03 17:00"))
+        tracker.track.assert_called_once()
+        kwargs = tracker.track.call_args[1]
+        assert kwargs["meal_name"] == "dal makhani"
+        assert kwargs["portion_amount"] == 200.0
+        assert kwargs["portion_unit"] == "gms"
+        logged_at = kwargs["logged_at"]
+        assert logged_at is not None
+        assert logged_at.month == 3
+        assert logged_at.day == 15
+        assert logged_at.hour == 17
+        assert logged_at.minute == 0
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_date_only(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm samosa 2 14.03"))
+        kwargs = tracker.track.call_args[1]
+        assert kwargs["logged_at"].month == 3
+        assert kwargs["logged_at"].day == 14
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_parses_time_only(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm samosa 2 9:30"))
+        kwargs = tracker.track.call_args[1]
+        logged_at = kwargs["logged_at"]
+        assert logged_at is not None
+        assert logged_at.hour == 9
+        assert logged_at.minute == 30
+        assert logged_at.day == date.today().day
+
+    @pytest.mark.asyncio
+    async def test_trackmeal_no_date_time_passes_none_logged_at(self) -> None:
+        tracker = AsyncMock()
+        tracker.track = AsyncMock(return_value="ok")
+        d = CommandDispatcher(meal_tracker=tracker)
+        await d.dispatch(_msg("/tm samosa 2"))
+        kwargs = tracker.track.call_args[1]
+        assert kwargs["logged_at"] is None
 
     @pytest.mark.asyncio
     async def test_trackmeal_missing_portion_returns_usage_hint(self) -> None:
