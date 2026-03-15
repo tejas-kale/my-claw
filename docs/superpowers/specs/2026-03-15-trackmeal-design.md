@@ -37,10 +37,19 @@ Examples: /tm dal makhani 200gms  |  /tm chicken biryani 1.5cups  |  /tm samosa 
 
 **Parsed examples:**
 ```
-/tm dal makhani 200gms       → meal="dal makhani", portion=200.0, unit="gms"
-/tm chicken biryani 1.5cups  → meal="chicken biryani", portion=1.5, unit="cups"
-/tm samosa 2                 → meal="samosa", portion=2.0, unit="units"
+/tm dal makhani 200gms            → meal="dal makhani", portion=200.0, unit="gms", logged_at=now
+/tm chicken biryani 1.5cups       → meal="chicken biryani", portion=1.5, unit="cups", logged_at=now
+/tm samosa 2                      → meal="samosa", portion=2.0, unit="units", logged_at=now
+/tm dal makhani 200g 15.03 17:00  → meal="dal makhani", logged_at=March 15 17:00 local (UTC-stored)
+/tm samosa 2 14.03                → meal="samosa", logged_at=March 14 at time-of-entry
+/tm rice 200gms 9:30              → meal="rice", logged_at=today 09:30 local time
 ```
+
+**Optional date/time tokens after portion:**
+- Date: `D.M`, `DD.M`, `D.MM`, `DD.MM` — current year implied
+- Time: `H:MM` or `HH:MM` — 24-hour, treated as local machine time, stored as UTC
+- Both optional independently; absent → `logged_at = now (UTC)`
+- Date always comes before time when both provided
 
 ### Summary subcommand
 
