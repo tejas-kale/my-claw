@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import tempfile
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from assistant.models import LLMResponse, LLMToolCall
-from assistant.tools.meal_tracker import MealTracker
+from assistant.tools.meal_tracker import MealTracker, _NUTRIENT_FIELDS
 
 
 def _make_tracker(tmp_path: Path) -> MealTracker:
@@ -193,3 +194,66 @@ async def test_call_gemini_returns_all_nulls_on_bad_json(tmp_path: Path) -> None
     )
     result = await tracker._call_gemini("unknown dish", 1.0, "units", None)
     assert all(v is None for v in result.values())
+
+
+@pytest.mark.asyncio
+async def test_insert_bigquery_skipped_when_no_project(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)  # bq_client=None already
+    # Should complete without error
+    await tracker._insert_bigquery("dal makhani", 200.0, "gms", {"kcal": 302.0}, "search")
+
+
+@pytest.mark.asyncio
+async def test_insert_bigquery_inserts_correct_row(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    mock_bq = MagicMock()
+    mock_bq.get_table.side_effect = Exception("not found")
+    mock_bq.create_table.return_value = None
+    mock_bq.insert_rows_json.return_value = []
+    tracker._bq_client = mock_bq
+    tracker._config.health_bigquery_dataset_id = "health"
+    tracker._config.health_bigquery_table_id = "meals"
+    tracker._config.bigquery_project_id = "my-project"
+
+    nutrients = {f: 1.0 for f in _NUTRIENT_FIELDS}
+    await tracker._insert_bigquery("dal makhani", 200.0, "gms", nutrients, "search")
+
+    mock_bq.insert_rows_json.assert_called_once()
+    rows = mock_bq.insert_rows_json.call_args[0][1]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["meal_name"] == "dal makhani"
+    assert row["portion_amount"] == 200.0
+    assert row["portion_unit"] == "gms"
+    assert row["source"] == "search"
+    assert row["kcal"] == 1.0
+    assert "logged_at" in row
+
+
+@pytest.mark.asyncio
+async def test_get_summary_queries_bigquery_for_date(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    mock_bq = MagicMock()
+    mock_job = MagicMock()
+    mock_job.result.return_value = [
+        {"meal_name": "Dal Makhani", "portion_amount": 200.0, "portion_unit": "gms",
+         "kcal": 302.0, "proteins_g": 16.0, "source": "search", "logged_at": "2026-03-15T18:00:00Z"},
+    ]
+    mock_bq.query.return_value = mock_job
+    tracker._bq_client = mock_bq
+    tracker._config.bigquery_project_id = "my-project"
+
+    rows = await tracker.get_summary(datetime.date(2026, 3, 15))
+
+    mock_bq.query.assert_called_once()
+    call_kwargs = mock_bq.query.call_args
+    assert "2026-03-15" in str(call_kwargs)
+    assert len(rows) == 1
+    assert rows[0]["meal_name"] == "Dal Makhani"
+
+
+@pytest.mark.asyncio
+async def test_get_summary_returns_empty_when_no_bq_client(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)  # bq_client=None
+    rows = await tracker.get_summary(datetime.date(2026, 3, 15))
+    assert rows == []

@@ -227,10 +227,89 @@ class MealTracker:
         nutrients: dict[str, float | None],
         source: str,
     ) -> None:
-        raise NotImplementedError
+        """Insert one meal row into BigQuery. No-op if bq_client is None."""
+        if self._bq_client is None:
+            return
+        row: dict[str, Any] = {
+            "meal_name": meal_name,
+            "portion_amount": portion_amount,
+            "portion_unit": portion_unit,
+            "source": source,
+            "logged_at": datetime.datetime.now(timezone.utc).isoformat(),
+        }
+        for field in _NUTRIENT_FIELDS:
+            row[field] = nutrients.get(field)
+
+        project = self._config.bigquery_project_id
+        dataset = self._config.health_bigquery_dataset_id
+        table = self._config.health_bigquery_table_id
+        table_ref = f"{project}.{dataset}.{table}"
+
+        await asyncio.to_thread(self._bq_insert, table_ref, [row])
+
+    def _bq_insert(self, table_ref: str, rows: list[dict[str, Any]]) -> None:
+        try:
+            self._bq_client.get_table(table_ref)
+        except Exception:
+            schema = _build_bq_schema()
+            from google.cloud.bigquery import Table  # type: ignore[import-untyped]
+            table_obj = Table(table_ref, schema=schema)
+            self._bq_client.create_table(table_obj, exists_ok=True)
+
+        errors = self._bq_client.insert_rows_json(table_ref, rows)
+        if errors:
+            raise RuntimeError(f"BigQuery insert failed: {errors}")
 
     async def get_summary(self, date: datetime.date) -> list[dict[str, Any]]:
-        raise NotImplementedError
+        """Return all meal rows for the given date from BigQuery."""
+        if self._bq_client is None:
+            return []
+        project = self._config.bigquery_project_id
+        if not project:
+            return []
+        dataset = self._config.health_bigquery_dataset_id
+        table = self._config.health_bigquery_table_id
+        tz = self._config.meal_summary_timezone
+        return await asyncio.to_thread(self._bq_query_summary, project, dataset, table, tz, date)
+
+    def _bq_query_summary(
+        self,
+        project: str,
+        dataset: str,
+        table: str,
+        tz: str,
+        date: datetime.date,
+    ) -> list[dict[str, Any]]:
+        from google.cloud import bigquery  # type: ignore[import-untyped]
+
+        date_str = date.isoformat()
+        query = f"""
+            SELECT *
+            FROM `{project}.{dataset}.{table}`
+            WHERE DATE(logged_at, @timezone) = '{date_str}'
+            ORDER BY logged_at ASC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("timezone", "STRING", tz),
+            ]
+        )
+        result = self._bq_client.query(query, job_config=job_config).result()
+        return [dict(row) for row in result]
+
+
+def _build_bq_schema() -> list[Any]:
+    from google.cloud import bigquery  # type: ignore[import-untyped]
+
+    cols = [
+        ("meal_name", "STRING", "REQUIRED"),
+        ("portion_amount", "FLOAT64", "REQUIRED"),
+        ("portion_unit", "STRING", "REQUIRED"),
+        *[(f, "FLOAT64", "NULLABLE") for f in _NUTRIENT_FIELDS],
+        ("source", "STRING", "REQUIRED"),
+        ("logged_at", "TIMESTAMP", "REQUIRED"),
+    ]
+    return [bigquery.SchemaField(name, typ, mode=mode) for name, typ, mode in cols]
 
 
 def _parse_nutrients(content: str) -> dict[str, float | None]:
