@@ -258,3 +258,70 @@ async def test_get_summary_returns_empty_when_no_bq_client(tmp_path: Path) -> No
     tracker = _make_tracker(tmp_path)  # bq_client=None
     rows = await tracker.get_summary(datetime.date(2026, 3, 15))
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_track_cache_miss_calls_gemini_and_saves_memory(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    nutrients = {f: 1.0 for f in _NUTRIENT_FIELDS}
+    tracker._call_gemini = AsyncMock(return_value=nutrients)
+    tracker._save_memory = AsyncMock()
+    tracker._insert_bigquery = AsyncMock()
+
+    # Provide a second Gemini call for source summary
+    tracker._llm.generate = AsyncMock(
+        return_value=_make_llm_response(content="Source: Kagi via healthline.")
+    )
+
+    reply = await tracker.track("dal makhani", 200.0, "gms")
+
+    tracker._call_gemini.assert_called_once_with("dal makhani", 200.0, "gms", None)
+    tracker._save_memory.assert_called_once()
+    tracker._insert_bigquery.assert_called_once()
+    args = tracker._insert_bigquery.call_args[1]
+    assert args["source"] == "search"
+    assert "dal makhani" in reply.lower() or "200" in reply
+
+
+@pytest.mark.asyncio
+async def test_track_cache_hit_skips_search_and_memory_save(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    # Pre-populate memory file
+    memory_file = tmp_path / "memory.md"
+    memory_file.write_text(
+        "## Dal Makhani\nPer 100gms: 151 kcal.\nSource: x.\n"
+    )
+    nutrients = {f: 1.0 for f in _NUTRIENT_FIELDS}
+    tracker._call_gemini = AsyncMock(return_value=nutrients)
+    tracker._save_memory = AsyncMock()
+    tracker._insert_bigquery = AsyncMock()
+
+    await tracker.track("dal makhani", 200.0, "gms")
+
+    # _call_gemini called with memory_entry (not None)
+    call_args = tracker._call_gemini.call_args
+    assert call_args[0][3] is not None  # memory_entry is the 4th positional arg
+    # _save_memory NOT called
+    tracker._save_memory.assert_not_called()
+    # BQ insert called with source="memory"
+    args = tracker._insert_bigquery.call_args[1]
+    assert args["source"] == "memory"
+
+
+@pytest.mark.asyncio
+async def test_track_null_nutrients_still_inserts_row_but_skips_memory(tmp_path: Path) -> None:
+    tracker = _make_tracker(tmp_path)
+    tracker._call_gemini = AsyncMock(return_value={f: None for f in _NUTRIENT_FIELDS})
+    tracker._save_memory = AsyncMock()
+    tracker._insert_bigquery = AsyncMock()
+    tracker._llm.generate = AsyncMock(
+        return_value=_make_llm_response(content="Source: unknown.")
+    )
+
+    reply = await tracker.track("mystery dish", 1.0, "units")
+
+    # BQ insert still happens (with null values)
+    tracker._insert_bigquery.assert_called_once()
+    # Memory NOT saved when all nutrients are null (would write garbage to file)
+    tracker._save_memory.assert_not_called()
+    assert "incomplete" in reply.lower() or "mystery dish" in reply.lower()

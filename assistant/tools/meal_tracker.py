@@ -96,9 +96,60 @@ class MealTracker:
             path = self._memory_path()
             await asyncio.to_thread(_append_memory_entry, path, entry)
 
-    # Placeholder methods — implemented in subsequent tasks
     async def track(self, meal_name: str, portion_amount: float, portion_unit: str) -> str:
-        raise NotImplementedError
+        """Full meal tracking flow: memory check → Gemini → BigQuery → formatted reply."""
+        memory_entry = await self._check_memory(meal_name)
+        source = "memory" if memory_entry is not None else "search"
+        nutrients = await self._call_gemini(meal_name, portion_amount, portion_unit, memory_entry)
+
+        if source == "search":
+            source_summary = await self._fetch_source_summary(meal_name)
+            # Only save to memory if at least some nutrients were found.
+            # An all-null result would write garbage ("Per X: .") to the memory file.
+            if any(v is not None for v in nutrients.values()):
+                base_unit = _base_unit_for(portion_unit)
+                await self._save_memory(
+                    meal_name,
+                    _scale_to_base(nutrients, portion_amount, portion_unit),
+                    base_unit,
+                    source_summary,
+                )
+
+        try:
+            await self._insert_bigquery(
+                meal_name=meal_name,
+                portion_amount=portion_amount,
+                portion_unit=portion_unit,
+                nutrients=nutrients,
+                source=source,
+            )
+        except Exception as exc:
+            LOGGER.error("BigQuery insert failed for %r: %s", meal_name, exc)
+            return (
+                f"Logged {meal_name} to memory but could not write to the database.\n"
+                + _format_nutrients(meal_name, portion_amount, portion_unit, nutrients)
+            )
+
+        all_null = all(v is None for v in nutrients.values())
+        if all_null:
+            return f"Logged {meal_name} ({portion_amount} {portion_unit}) but nutritional data could not be parsed."
+
+        return _format_nutrients(meal_name, portion_amount, portion_unit, nutrients)
+
+    async def _fetch_source_summary(self, meal_name: str) -> str:
+        """Ask Gemini to summarise the sources it used in 1-2 sentences."""
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"In 1-2 sentences, summarize the source(s) you used to find "
+                    f"nutritional information for {meal_name}. "
+                    f"Do not include any nutritional values."
+                ),
+            }
+        ]
+        response = await self._llm.generate(messages, model=_GEMINI_MODEL)
+        return response.content.strip()
 
     async def _call_gemini(
         self,
@@ -341,3 +392,51 @@ def _nutrient_unit(field: str) -> str:
     if field.endswith("_mg"):
         return "mg"
     return ""
+
+
+def _base_unit_for(portion_unit: str) -> str:
+    if portion_unit == "gms":
+        return "100gms"
+    if portion_unit == "cups":
+        return "1 cup"
+    return "1 unit"
+
+
+def _scale_to_base(
+    nutrients: dict[str, float | None],
+    portion_amount: float,
+    portion_unit: str,
+) -> dict[str, float | None]:
+    """Scale portion-level nutrients back to base unit for memory storage."""
+    if portion_amount == 0:
+        return nutrients
+    factor = 100.0 / portion_amount if portion_unit == "gms" else 1.0 / portion_amount
+    return {
+        f: (round(v * factor, 1) if v is not None else None)
+        for f, v in nutrients.items()
+    }
+
+
+def _format_nutrients(
+    meal_name: str,
+    portion_amount: float,
+    portion_unit: str,
+    nutrients: dict[str, float | None],
+) -> str:
+    """Format nutritional data as a readable Telegram message."""
+    kcal = nutrients.get("kcal")
+    kcal_str = f"{kcal:.0f} kcal" if kcal is not None else "? kcal"
+    lines = [f"*{meal_name.title()}* — {portion_amount:.0f} {portion_unit} — {kcal_str}"]
+    field_labels = {
+        "carbs_g": "Carbs", "proteins_g": "Protein", "fats_g": "Fat",
+        "sugars_g": "Sugars", "fiber_g": "Fiber", "sodium_mg": "Sodium",
+        "cholesterol_mg": "Cholesterol", "potassium_mg": "Potassium",
+        "iron_mg": "Iron", "calcium_mg": "Calcium", "vitamin_c_mg": "Vitamin C",
+    }
+    for field, label in field_labels.items():
+        val = nutrients.get(field)
+        if val is None:
+            continue
+        unit = _nutrient_unit(field).strip()
+        lines.append(f"• {label}: {val:.1f} {unit}")
+    return "\n".join(lines)
