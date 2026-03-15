@@ -5,18 +5,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+import zoneinfo
+from datetime import datetime, timedelta, timezone
 
 from assistant.agent_runtime import AgentRuntime
 from assistant.commands import CommandDispatcher
-from assistant.config import allowed_telegram_senders, load_settings
+from assistant.config import Settings, allowed_telegram_senders, load_settings
 from assistant.db import Database
 from assistant.llm.openrouter import OpenRouterProvider
 from assistant.models import Message
 from assistant.scheduler import TaskScheduler
 from assistant.telegram_adapter import TelegramAdapter
 from assistant.tools.ddg_search_tool import DdgSearchTool
+from assistant.tools.get_meal_summary_tool import GetMealSummaryTool
 from assistant.tools.magazine_tool import MagazineTool
+from assistant.tools.meal_tracker import MealTracker
 from assistant.tools.notes_tool import ListNotesTool, WriteNoteTool
 from assistant.tools.podcast_tool import PodcastTool
 from assistant.tools.price_tracker_tool import PriceTrackerTool
@@ -46,6 +49,53 @@ async def _fetch_location() -> str:
         return "unknown"
 
 
+def _schedule_meal_summary_if_needed(db: Database, settings: Settings) -> None:
+    """Create a 9PM meal summary task if none exists for today/tomorrow."""
+    tz = zoneinfo.ZoneInfo(settings.meal_summary_timezone)
+    now_local = datetime.now(tz)
+    today_9pm = now_local.replace(hour=21, minute=0, second=0, microsecond=0)
+    target = today_9pm if now_local < today_9pm else today_9pm + timedelta(days=1)
+    target_utc = target.astimezone(timezone.utc)
+
+    # Window: midnight to midnight on target's local date
+    target_local = target.astimezone(tz)
+    day_start = target_local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    day_end = target_local.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
+
+    existing = db.get_scheduled_meal_summary_task(window_start=day_start, window_end=day_end)
+    if existing:
+        LOGGER.info("Meal summary task already scheduled: %s", existing["run_at"])
+        return
+
+    db.upsert_group(settings.telegram_owner_id)
+    db.create_scheduled_task(
+        group_id=settings.telegram_owner_id,
+        prompt="__meal_summary__ Generate today's meal nutrition summary.",
+        run_at=target_utc,
+    )
+    LOGGER.info("Scheduled meal summary for %s UTC", target_utc.isoformat())
+
+
+def _reschedule_meal_summary(db: Database, settings: Settings) -> None:
+    """Schedule the next 9PM meal summary for tomorrow."""
+    tz = zoneinfo.ZoneInfo(settings.meal_summary_timezone)
+    tomorrow_9pm = (
+        datetime.now(tz).replace(hour=21, minute=0, second=0, microsecond=0)
+        + timedelta(days=1)
+    )
+    target_utc = tomorrow_9pm.astimezone(timezone.utc)
+    day_start = tomorrow_9pm.replace(hour=0, minute=0, second=0).astimezone(timezone.utc)
+    day_end = tomorrow_9pm.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
+    if not db.get_scheduled_meal_summary_task(day_start, day_end):
+        db.upsert_group(settings.telegram_owner_id)
+        db.create_scheduled_task(
+            group_id=settings.telegram_owner_id,
+            prompt="__meal_summary__ Generate today's meal nutrition summary.",
+            run_at=target_utc,
+        )
+        LOGGER.info("Rescheduled meal summary for %s UTC", target_utc.isoformat())
+
+
 async def run() -> None:
     """Initialize app layers and start processing loop."""
 
@@ -56,6 +106,7 @@ async def run() -> None:
 
     db = Database(settings.database_path)
     db.initialize()
+    _schedule_meal_summary_if_needed(db, settings)
 
     provider = OpenRouterProvider(settings)
     tools = ToolRegistry(db)
@@ -85,6 +136,22 @@ async def run() -> None:
             bq_table=settings.bigquery_table_id,
         )
 
+    if settings.bigquery_project_id:
+        from google.cloud import bigquery as _bq  # type: ignore[import-untyped]
+        _bq_client = _bq.Client(project=settings.bigquery_project_id)
+    else:
+        _bq_client = None
+
+    # MealTracker gets its own KagiSearchTool instance (same API key, separate object).
+    meal_tracker = MealTracker(
+        config=settings,
+        llm=provider,
+        kagi=KagiSearchTool(api_key=settings.kagi_api_key),
+        bq_client=_bq_client,
+    )
+    meal_summary_tool = GetMealSummaryTool(tracker=meal_tracker)
+    tools.register(meal_summary_tool)
+
     command_dispatcher = CommandDispatcher(
         podcast_tool=podcast_tool,
         kagi_search_tool=KagiSearchTool(api_key=settings.kagi_api_key),
@@ -95,6 +162,7 @@ async def run() -> None:
         price_tracker_tool=price_tracker_tool,
         magazine_tool=magazine_tool,
         citation_tracker_tool=CitationTrackerTool(),
+        meal_tracker=meal_tracker,
     )
 
     location = await _fetch_location()
@@ -122,6 +190,9 @@ async def run() -> None:
             )
         )
         await telegram_adapter.send_message(group_id, response, is_group=True)
+        # Reschedule daily meal summary for next day after it fires.
+        if "__meal_summary__" in prompt:
+            _reschedule_meal_summary(db, settings)
 
     scheduler = TaskScheduler(db=db, handler=handle_scheduled_prompt)
 
