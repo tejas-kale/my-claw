@@ -17,6 +17,7 @@ A personal AI assistant that lives in your Telegram inbox. Send it a message (or
   - [Task scheduler](#task-scheduler)
   - [Podcast generation](#podcast-generation)
   - [Grocery price tracker](#grocery-price-tracker)
+  - [Meal Nutrition Tracker](#meal-nutrition-tracker)
 - [Commands reference](#commands-reference)
 - [Adding a tool](#adding-a-tool)
 - [Testing](#testing)
@@ -383,6 +384,53 @@ LIMIT 20;
 
 ---
 
+### Meal Nutrition Tracker
+
+Log a meal and get its nutritional breakdown.
+
+#### Usage
+
+```
+/tm <meal name> <portion>
+/tm summary [month day]
+```
+
+#### Portion formats
+
+- `200gms` or `200g` — grams
+- `1.5cups` — cups
+- `2` — units (plain number, no suffix)
+
+#### Examples
+
+```
+/tm dal makhani 200gms
+/tm chicken biryani 1.5cups
+/tm samosa 2
+/tm summary
+/tm summary mar 15
+```
+
+#### How it works
+
+1. Checks a local memory file (`~/.claw/meal_nutrition_memory.md`) for cached data
+2. If not cached: calls Gemini (`google/gemini-3.1-pro-preview-customtools`) via OpenRouter, which can search Kagi up to 3 times
+3. Saves the result to BigQuery (`health.meals` table) and to the memory file
+4. Every day at 9PM (configured timezone), sends a summary of all meals vs. the 2300 kcal goal with 3 tips
+
+#### Configuration
+
+Add these settings to `~/.config/tejas/config.yaml` under the `claw:` section:
+
+```yaml
+meal_nutrition_memory_path: ~/.claw/meal_nutrition_memory.md
+health_bigquery_dataset_id: health
+health_bigquery_table_id: meals
+meal_summary_timezone: Europe/Berlin   # IANA timezone
+```
+
+---
+
 ## Commands reference
 
 Commands are `/`-prefixed messages that bypass the LLM entirely. They are processed synchronously (except `/podcast`, which spawns a background task).
@@ -396,6 +444,7 @@ Telegram shows registered commands as an autocomplete list when you type `/` —
 | `/trackprice` | `/trackprice` (with attachment) | Extract receipt items and save to BigQuery. Attach a receipt image or PDF. |
 | `/magazine` | `/magazine <epub> [chapter]` | List chapters or generate audio from a magazine chapter. |
 | `/cite` | `/cite <status\|list\|add <url>\|run [id]\|citations <id>>` | Manage citation tracking. |
+| `/trackmeal` | `/trackmeal <meal> <portion>` | Track a meal and get nutritional info. Supports `/tm summary [date]` for daily reports. |
 | `/clear` | `/clear` | Wipe conversation context for the current group (history kept in DB). |
 | `/commands` | `/commands` | Show this list. |
 

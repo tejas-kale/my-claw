@@ -26,5 +26,9 @@
   {
     "usage": "/commands (/cm)",
     "description": "Show this list."
+  },
+  {
+    "usage": "/trackmeal (/tm) <meal> <portion>",
+    "description": "Track a meal and look up nutritional info (e.g. /tm dal makhani 200gms or /tm samosa 2). Use /tm summary [mar 15] for a daily nutrition report."
   }
 ]
