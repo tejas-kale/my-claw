@@ -264,6 +264,31 @@ class Database:
                 (status, _utc_now_iso(), task_id),
             )
 
+    def get_scheduled_meal_summary_task(
+        self, window_start: datetime, window_end: datetime
+    ) -> dict[str, Any] | None:
+        """Return a pending/running meal summary task within the given UTC window, or None.
+
+        Uses INSTR instead of LIKE to avoid SQLite treating '_' as a wildcard.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, group_id, prompt, run_at, status
+                FROM scheduled_tasks
+                WHERE INSTR(prompt, '__meal_summary__') > 0
+                AND status IN ('pending', 'running')
+                AND run_at >= ?
+                AND run_at < ?
+                LIMIT 1
+                """,
+                (
+                    window_start.astimezone(timezone.utc).isoformat(),
+                    window_end.astimezone(timezone.utc).isoformat(),
+                ),
+            ).fetchone()
+        return dict(row) if row else None
+
     def write_note(self, group_id: str, note: str) -> int:
         with self._connect() as conn:
             cur = conn.execute(

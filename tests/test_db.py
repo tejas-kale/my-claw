@@ -1,4 +1,8 @@
+from __future__ import annotations
+
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -58,3 +62,56 @@ def test_clear_history_does_not_affect_other_groups(tmp_path):
 
     assert db.get_recent_messages("group-2", limit=10) != []
     assert db.get_summary("group-2") == "group 2 summary"
+
+
+def _make_db() -> Database:
+    tmp = tempfile.mktemp(suffix=".db")
+    db = Database(Path(tmp))
+    db.initialize()
+    return db
+
+
+def test_get_scheduled_meal_summary_task_returns_none_when_empty() -> None:
+    db = _make_db()
+    now = datetime.now(timezone.utc)
+    result = db.get_scheduled_meal_summary_task(
+        window_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        window_end=now.replace(hour=23, minute=59, second=59, microsecond=0),
+    )
+    assert result is None
+
+
+def test_get_scheduled_meal_summary_task_returns_pending_task_in_window() -> None:
+    db = _make_db()
+    now = datetime.now(timezone.utc)
+    nine_pm = now.replace(hour=21, minute=0, second=0, microsecond=0)
+    db.upsert_group("owner-123")
+    db.create_scheduled_task(
+        group_id="owner-123",
+        prompt="__meal_summary__ Generate today's meal nutrition summary.",
+        run_at=nine_pm,
+    )
+    result = db.get_scheduled_meal_summary_task(
+        window_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        window_end=now.replace(hour=23, minute=59, second=59, microsecond=0),
+    )
+    assert result is not None
+    assert "__meal_summary__" in result["prompt"]
+
+
+def test_get_scheduled_meal_summary_task_ignores_completed_tasks() -> None:
+    db = _make_db()
+    now = datetime.now(timezone.utc)
+    nine_pm = now.replace(hour=21, minute=0, second=0, microsecond=0)
+    db.upsert_group("owner-123")
+    task_id = db.create_scheduled_task(
+        group_id="owner-123",
+        prompt="__meal_summary__ Generate today's meal nutrition summary.",
+        run_at=nine_pm,
+    )
+    db.mark_task_status(task_id, "completed")
+    result = db.get_scheduled_meal_summary_task(
+        window_start=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        window_end=now.replace(hour=23, minute=59, second=59, microsecond=0),
+    )
+    assert result is None
