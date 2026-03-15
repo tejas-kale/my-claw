@@ -107,7 +107,117 @@ class MealTracker:
         portion_unit: str,
         memory_entry: str | None,
     ) -> dict[str, float | None]:
-        raise NotImplementedError
+        """Call Gemini to get nutritional data. Uses cache hit path or search path."""
+        if memory_entry is not None:
+            return await self._gemini_scale(meal_name, portion_amount, portion_unit, memory_entry)
+        return await self._gemini_search(meal_name, portion_amount, portion_unit)
+
+    async def _gemini_scale(
+        self,
+        meal_name: str,
+        portion_amount: float,
+        portion_unit: str,
+        memory_entry: str,
+    ) -> dict[str, float | None]:
+        """Single-turn Gemini call to scale cached values to requested portion."""
+        fields = ", ".join(_NUTRIENT_FIELDS)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"Scale the nutritional data below to the requested portion. "
+                    f"Return only a JSON object with exactly these fields "
+                    f"(null if a value cannot be computed): {fields}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Nutritional data: {memory_entry}\n"
+                    f"Target portion: {portion_amount} {portion_unit} of {meal_name}."
+                ),
+            },
+        ]
+        response = await self._llm.generate(messages, model=_GEMINI_MODEL)
+        return _parse_nutrients(response.content)
+
+    async def _gemini_search(
+        self,
+        meal_name: str,
+        portion_amount: float,
+        portion_unit: str,
+    ) -> dict[str, float | None]:
+        """Multi-turn Gemini call with Kagi search tool to find nutritional data."""
+        fields = ", ".join(_NUTRIENT_FIELDS)
+        memory_context = await self._load_memory_context()
+        system_prompt = (
+            f"Today is {datetime.date.today().isoformat()}.\n"
+            f"You are a nutrition assistant. Find accurate nutritional information for the meal below.\n"
+            f"You may use the kagi_search tool to look up information. You may search at most 3 times.\n"
+            f"Return your final answer as a JSON object with exactly these fields (null if unknown):\n"
+            f"{fields}\n"
+            f"All values must be for the exact portion the user specifies.\n\n"
+            f"Previously cached meals (for reference, do not re-search these):\n{memory_context}"
+        )
+        kagi_tool_spec = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "kagi_search",
+                    "description": "Search the web for nutritional information.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"What is the nutritional breakdown of {meal_name}, "
+                    f"{portion_amount} {portion_unit}?"
+                ),
+            },
+        ]
+        search_count = 0
+        while True:
+            tools = kagi_tool_spec if search_count < 3 else None
+            response = await self._llm.generate(messages, tools=tools, model=_GEMINI_MODEL)
+            if not response.tool_calls:
+                return _parse_nutrients(response.content)
+            for tool_call in response.tool_calls:
+                if tool_call.name == "kagi_search" and search_count < 3:
+                    query = tool_call.arguments.get("query", "")
+                    result = await self._kagi.run(query=query)
+                    search_count += 1
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": tool_call.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "kagi_search",
+                                "arguments": json.dumps(tool_call.arguments),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.call_id,
+                        "content": str(result),
+                    })
+
+    async def _load_memory_context(self) -> str:
+        """Load full memory file as context string."""
+        path = self._memory_path()
+        if not path.exists():
+            return "No meals cached yet."
+        return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
     async def _insert_bigquery(
         self,
@@ -121,6 +231,20 @@ class MealTracker:
 
     async def get_summary(self, date: datetime.date) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+
+def _parse_nutrients(content: str) -> dict[str, float | None]:
+    """Extract the 12-field nutrient JSON from Gemini's text response."""
+    text = content.strip()
+    # Strip markdown code fences if present
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        LOGGER.warning("Gemini returned unparseable JSON: %r", content[:200])
+        return {f: None for f in _NUTRIENT_FIELDS}
+    return {f: (float(data[f]) if data.get(f) is not None else None) for f in _NUTRIENT_FIELDS}
 
 
 def _append_memory_entry(path: Path, entry: str) -> None:
