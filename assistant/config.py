@@ -30,6 +30,10 @@ class Settings(BaseModel):
     bigquery_dataset_id: str = "economics"
     bigquery_table_id: str = "german_shopping_receipts"
     gemini_api_key: str = ""
+    meal_nutrition_memory_path: str = "~/.claw/meal_nutrition_memory.md"
+    health_bigquery_dataset_id: str = "health"
+    health_bigquery_table_id: str = "meals"
+    meal_summary_timezone: str = "UTC"
 
 
 def load_settings() -> Settings:
@@ -54,6 +58,10 @@ def load_settings() -> Settings:
         bigquery_project_id=cfg.claw.bigquery_project_id,
         bigquery_dataset_id=cfg.claw.bigquery_dataset_id,
         bigquery_table_id=cfg.claw.bigquery_table_id,
+        meal_nutrition_memory_path=getattr(cfg.claw, "meal_nutrition_memory_path", None) or "~/.claw/meal_nutrition_memory.md",
+        health_bigquery_dataset_id=getattr(cfg.claw, "health_bigquery_dataset_id", None) or "health",
+        health_bigquery_table_id=getattr(cfg.claw, "health_bigquery_table_id", None) or "meals",
+        meal_summary_timezone=getattr(cfg.claw, "meal_summary_timezone", None) or "UTC",
     )
 
 
