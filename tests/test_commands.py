@@ -484,7 +484,7 @@ class FakeLLM:
         self.calls: list[list[dict]] = []
         self._reply = reply
 
-    async def generate(self, messages: list[dict], tools=None, response_format=None) -> LLMResponse:  # noqa: ANN001
+    async def generate(self, messages: list[dict], tools=None, response_format=None, model: str | None = None) -> LLMResponse:  # noqa: ANN001
         self.calls.append(messages)
         return LLMResponse(content=self._reply)
 

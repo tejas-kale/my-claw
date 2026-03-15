@@ -30,9 +30,10 @@ class OpenRouterProvider(LLMProvider):
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         payload: dict[str, Any] = {
-            "model": self._settings.openrouter_model,
+            "model": model or self._settings.openrouter_model,
             "messages": messages,
         }
         if tools:
@@ -76,7 +77,7 @@ class OpenRouterProvider(LLMProvider):
         )
 
         parsed_tool_calls: list[LLMToolCall] = []
-        for tool_call in choice.get("tool_calls", []):
+        for tool_call in choice.get("tool_calls") or []:
             function_data = tool_call.get("function", {})
             parsed_tool_calls.append(
                 LLMToolCall(

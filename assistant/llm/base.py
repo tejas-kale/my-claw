@@ -17,5 +17,6 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         """Generate a model response."""
