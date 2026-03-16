@@ -36,10 +36,11 @@ class TelegramAdapter:
     async def poll_messages(self) -> AsyncIterator[Message]:
         """Long-poll getUpdates and yield normalized Message objects."""
 
-        # read=None: no read timeout — the long-poll connection intentionally blocks
-        # for up to poll_timeout seconds waiting for Telegram to push updates.
+        # read timeout is slightly above poll_timeout: Telegram always responds within
+        # poll_timeout seconds (updates or empty), so this gives adequate margin while
+        # ensuring a stale connection after sleep eventually times out and retries.
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=5.0)
+            timeout=httpx.Timeout(connect=10.0, read=self._poll_timeout + 10.0, write=10.0, pool=5.0)
         ) as client:
             # Drain stale messages on startup.
             await self._drain_stale(client)
