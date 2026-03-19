@@ -32,6 +32,12 @@ from assistant.tools.web_search_tool import KagiSearchTool
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
+_MEAL_SUMMARY_PROMPT = (
+    "__meal_summary__ Generate today's meal nutrition summary. "
+    "Flag any nutrients that are low or high (fiber <25g, sodium >2000mg, protein <50g). "
+    "End with 3 concrete nutritional tips for tomorrow."
+)
+
 
 async def _fetch_location() -> str:
     """Return a city/region/country string from IP geolocation, or 'unknown'."""
@@ -70,7 +76,7 @@ def _schedule_meal_summary_if_needed(db: Database, settings: Settings) -> None:
     db.upsert_group(settings.telegram_owner_id)
     db.create_scheduled_task(
         group_id=settings.telegram_owner_id,
-        prompt="__meal_summary__ Generate today's meal nutrition summary.",
+        prompt=_MEAL_SUMMARY_PROMPT,
         run_at=target_utc,
     )
     LOGGER.info("Scheduled meal summary for %s UTC", target_utc.isoformat())
@@ -90,7 +96,7 @@ def _reschedule_meal_summary(db: Database, settings: Settings) -> None:
         db.upsert_group(settings.telegram_owner_id)
         db.create_scheduled_task(
             group_id=settings.telegram_owner_id,
-            prompt="__meal_summary__ Generate today's meal nutrition summary.",
+            prompt=_MEAL_SUMMARY_PROMPT,
             run_at=target_utc,
         )
         LOGGER.info("Rescheduled meal summary for %s UTC", target_utc.isoformat())
